@@ -1,0 +1,15 @@
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.csproj.AssemblyReference.cache
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.GeneratedMSBuildEditorConfig.editorconfig
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.AssemblyInfoInputs.cache
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.AssemblyInfo.cs
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.csproj.CoreCompileInputs.cache
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\bin\Release\net48\RegisterShell.exe.config
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\bin\Release\net48\RegisterShell.exe
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\bin\Release\net48\RegisterShell.pdb
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\bin\Release\net48\SharpShell.dll
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\bin\Release\net48\YtdThumbnail.dll
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\bin\Release\net48\YtdThumbnail.pdb
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\Register.B22C06DD.Up2Date
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.exe
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.pdb
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.exe.config

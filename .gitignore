@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.spec.bak
+.env
+.venv/
+venv/
+*.log
+update_cache/
+update_skip.json

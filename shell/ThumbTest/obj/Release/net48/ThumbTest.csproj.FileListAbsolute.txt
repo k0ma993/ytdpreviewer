@@ -1,0 +1,14 @@
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.csproj.AssemblyReference.cache
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.GeneratedMSBuildEditorConfig.editorconfig
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.AssemblyInfoInputs.cache
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.AssemblyInfo.cs
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.csproj.CoreCompileInputs.cache
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\bin\Release\net48\ThumbTest.exe.config
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\bin\Release\net48\ThumbTest.exe
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\bin\Release\net48\ThumbTest.pdb
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\bin\Release\net48\YtdThumbnail.dll
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\bin\Release\net48\YtdThumbnail.pdb
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.csproj.Up2Date
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.exe
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.pdb
+D:\PROJECT\ytdpreviewer\shell\ThumbTest\obj\Release\net48\ThumbTest.exe.config
