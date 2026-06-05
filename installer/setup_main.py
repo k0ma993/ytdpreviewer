@@ -42,12 +42,16 @@ from installer.setup_ui import (
 from ytdpreviewer.app_icon import apply_tk_icon, load_brand_image
 from ytdpreviewer.ui_theme import APP_AUTHOR, APP_CREDIT
 from ytdpreviewer.paths import default_install_dir
+import winreg
+
 from ytdpreviewer.setup_windows import (
+    YTD_THUMB_CLSID,
     _com_clsid_registered_hklm,
     _is_admin,
+    _shellex_registered,
     install_with_progress,
+    launch_background_app,
     register_explorer_thumbnails_admin,
-    request_admin_explorer_thumbnails,
     uninstall_with_progress,
 )
 from ytdpreviewer.ui_theme import center_tk_window
@@ -192,7 +196,7 @@ class SetupApp:
         feat = card(body, pady=(12, 6))
         section_label(feat, "Возможности")
         feature_row(feat, "Двойной клик по .ytd — превью текстур")
-        feature_row(feat, "Иконки и превью .ytd / .ydd в проводнике")
+        feature_row(feat, "Превью .ytd в проводнике (один установщик)")
         feature_row(feat, "Автозапуск в системном трее")
 
         path_card = card(body, pady=6)
@@ -204,7 +208,7 @@ class SetupApp:
         self.explorer_var = tk.BooleanVar(value=True)
         self.explorer_check = dark_check(
             opts,
-            "Превью текстур в проводнике (рекомендуется)",
+            "Превью .ytd в проводнике — всё в одной установке (рекомендуется)",
             self.explorer_var,
         )
         self.explorer_check.pack(anchor=tk.W)
@@ -295,27 +299,27 @@ class SetupApp:
             def on_progress(percent: int, message: str) -> None:
                 self.root.after(0, lambda p=percent, m=message: self._update_progress(p, m))
 
+            want_thumbs = self.explorer_var.get()
+            if want_thumbs and not _is_admin():
+                raise RuntimeError(
+                    "Для превью в проводнике нужны права администратора.\n\n"
+                    "Запустите setup.exe снова и подтвердите запрос UAC (Да)."
+                )
+
             install_with_progress(
                 target,
                 source_dir=self._bundle_dir,
                 dev=False,
-                shell_admin=False,
+                shell_admin=want_thumbs and _is_admin(),
+                explorer_thumbnails=want_thumbs,
                 on_progress=on_progress,
             )
-            from ytdpreviewer.setup_windows import repair_installation
-
-            repair_installation(target, re_register=True, register_thumbnails=False)
 
             explorer_ok = True
-            if self.explorer_var.get():
-                self.root.after(
-                    0,
-                    lambda: self._update_progress(95, "Превью в проводнике (администратор)..."),
+            if want_thumbs:
+                explorer_ok = _com_clsid_registered_hklm(YTD_THUMB_CLSID) and _shellex_registered(
+                    winreg.HKEY_LOCAL_MACHINE, ".ytd", clsid=YTD_THUMB_CLSID
                 )
-                if _is_admin():
-                    explorer_ok = register_explorer_thumbnails_admin(target)
-                else:
-                    explorer_ok = request_admin_explorer_thumbnails(target)
 
             self.root.after(0, lambda: self._on_install_done(target, explorer_ok))
         except Exception as exc:
@@ -324,34 +328,24 @@ class SetupApp:
     def _on_install_done(self, target: Path, explorer_ok: bool) -> None:
         self._set_busy(False)
         self._update_progress(100, "Установка завершена")
-        exe = target / "YTDPreviewer.exe"
-        if exe.is_file():
-            try:
-                subprocess.Popen(
-                    [str(exe), "--background"],
-                    cwd=str(target),
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-            except OSError:
-                pass
+        launch_background_app(target)
 
         extra = ""
         if self.explorer_var.get():
-            if explorer_ok or _com_clsid_registered_hklm():
+            if explorer_ok:
                 extra = "\n\nПревью .ytd в проводнике включены."
             else:
                 extra = (
-                    "\n\nПревью в проводнике НЕ включены.\n"
-                    "Запустите от администратора:\n"
-                    "  scripts\\install_shell_admin.bat\n"
-                    "затем scripts\\refresh_explorer_thumbs.bat"
+                    "\n\nПревью в проводнике не зарегистрированы.\n"
+                    "Запустите setup.exe от имени администратора и установите снова."
                 )
 
         messagebox.showinfo(
             "Установлено",
             f"Программа установлена в:\n{target}\n\n"
             "• Дважды кликните .ytd — превью текстур\n"
-            "• Иконки .ytd / .ydd в проводнике не меняются"
+            "• Дважды кликните .ydd — 3D превью\n"
+            "• Автозапуск в трее включён"
             f"{extra}",
         )
 

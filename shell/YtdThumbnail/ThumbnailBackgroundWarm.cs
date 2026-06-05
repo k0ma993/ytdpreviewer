@@ -25,7 +25,7 @@ internal static class ThumbnailBackgroundWarm
             return;
 
         if (ytdPath.EndsWith(".ydd", StringComparison.OrdinalIgnoreCase))
-            YddPathResolver.RememberRealPath(ytdPath);
+            return;
 
         string? dir;
         try

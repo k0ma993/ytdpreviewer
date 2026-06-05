@@ -13,3 +13,4 @@ D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\Register.B22C06DD.
 D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.exe
 D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.pdb
 D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.exe.config
+D:\PROJECT\ytdpreviewer\shell\RegisterShell\obj\Release\net48\RegisterShell.sourcelink.json

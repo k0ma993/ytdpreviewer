@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RegisterShell")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ddfb43be577ed9b8774ba2f66f36cd67ecc23d93")]
 [assembly: System.Reflection.AssemblyProductAttribute("RegisterShell")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RegisterShell")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

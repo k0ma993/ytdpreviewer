@@ -18,6 +18,13 @@ a = Analysis(
     hiddenimports=[
         "PIL._tkinter_finder",
         "pystray._win32",
+        "ytdpreviewer.background",
+        "ytdpreviewer.tray_native",
+        "pystray._util.win32",
+        "ytdpreviewer.update",
+        "ytdpreviewer.version_info",
+        "ytdpreviewer.apply_update",
+        "ytdpreviewer.export_progress",
         "texfury",
         "fivefury.ydd.reader",
         "fivefury.ydr.reader",

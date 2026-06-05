@@ -13,7 +13,9 @@ internal static class Program
     private static int Main(string[] args)
     {
         var cmd = args.Length > 0 ? args[0].ToLowerInvariant() : "install";
-        var handlers = new SharpThumbnailHandler[] { new YtdSharpHandler(), new YddSharpHandler() };
+        var installHandlers = new SharpThumbnailHandler[] { new YtdSharpHandler() };
+        var allHandlers = new SharpThumbnailHandler[] { new YtdSharpHandler(), new YddSharpHandler() };
+        var handlers = cmd == "uninstall" ? allHandlers : installHandlers;
 
         try
         {

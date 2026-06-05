@@ -145,9 +145,9 @@ internal static class ThumbnailRender
 
         try
         {
-            if (TryRenderViaPyw(installDir, ytdPath, temp, px, fast, timeoutMs, out var via)
-                || TryRenderViaCmd(installDir, ytdPath, temp, px, timeoutMs, out via)
-                || TryRenderViaExe(installDir, ytdPath, temp, px, $"--thumbnail \"{ytdPath}\" \"{temp}\" {px}{fastArg}", timeoutMs, out via))
+            if (TryRenderViaExe(installDir, ytdPath, temp, px, $"--thumbnail \"{ytdPath}\" \"{temp}\" {px}{fastArg}", timeoutMs, out var via)
+                || TryRenderViaPyw(installDir, ytdPath, temp, px, fast, timeoutMs, out via)
+                || TryRenderViaCmd(installDir, ytdPath, temp, px, timeoutMs, out via))
             {
                 var bmp = FinishRender(ytdPath, temp, requested, via);
                 if (bmp != null && scheduleWarm)
@@ -186,7 +186,9 @@ internal static class ThumbnailRender
 
         try
         {
-            if (TryRenderViaPywYdd(installDir, yddPath, temp, px, flatTimeoutMs, textureLookupPath, out var via)
+            var yddCli = $"--ydd-thumbnail \"{yddPath}\" \"{temp}\" {px}";
+            if (TryRenderViaExe(installDir, yddPath, temp, px, yddCli, flatTimeoutMs, out var via)
+                || TryRenderViaPywYdd(installDir, yddPath, temp, px, flatTimeoutMs, textureLookupPath, out via)
                 || TryRenderViaCmd(installDir, yddPath, temp, px, flatTimeoutMs, out via))
             {
                 var bmp = FinishRender(cacheKeyPath, temp, requested, via);
@@ -397,6 +399,13 @@ internal static class ThumbnailRender
             return false;
         }
         if (!File.Exists(full) || !seen.Add(full))
+        {
+            full = "";
+            return false;
+        }
+        var name = Path.GetFileName(full);
+        if (name.Equals("setup.exe", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("YTDPreviewer.exe", StringComparison.OrdinalIgnoreCase))
         {
             full = "";
             return false;

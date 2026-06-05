@@ -32,7 +32,9 @@ def main() -> None:
     }
     out = dist / "version.json"
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (dist / "version.txt").write_text(f"{__version__}\n", encoding="ascii")
     print(f"Wrote {out}")
+    print(f"Wrote {dist / 'version.txt'}")
 
 
 if __name__ == "__main__":

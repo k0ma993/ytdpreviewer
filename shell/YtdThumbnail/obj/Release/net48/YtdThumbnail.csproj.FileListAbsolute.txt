@@ -11,3 +11,4 @@ D:\PROJECT\ytdpreviewer\shell\YtdThumbnail\bin\Release\net48\SharpShell.dll
 D:\PROJECT\ytdpreviewer\shell\YtdThumbnail\obj\Release\net48\YtdThumb.6FA70E53.Up2Date
 C:\Users\yqeyw\AppData\Local\Temp\YtdThumbnailBuild\YtdThumbnail.dll
 C:\Users\yqeyw\AppData\Local\Temp\YtdThumbnailBuild\YtdThumbnail.pdb
+D:\PROJECT\ytdpreviewer\shell\YtdThumbnail\obj\Release\net48\YtdThumbnail.sourcelink.json

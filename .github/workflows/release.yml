@@ -33,5 +33,5 @@ jobs:
         with:
           files: |
             dist/app_bundle.zip
-            dist/setup/setup.exe
+            dist/setup.zip
           generate_release_notes: true

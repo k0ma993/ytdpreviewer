@@ -428,22 +428,99 @@ def _write_thumbnail_pyw(install_dir: Path, project_root: Path, *, dev: bool = F
     return pyw
 
 
-def _write_thumbnail_launcher(install_dir: Path) -> None:
-    pythonw = Path(sys.executable)
-    if pythonw.name.lower() == "python.exe":
-        candidate = pythonw.with_name("pythonw.exe")
+def _resolve_pythonw_for_thumbnails() -> Path | None:
+    """Real pythonw.exe for dev installs — never setup.exe / YTDPreviewer.exe."""
+    exe = Path(sys.executable).resolve()
+    if exe.name.lower() == "pythonw.exe":
+        return exe
+    if exe.name.lower() == "python.exe":
+        candidate = exe.with_name("pythonw.exe")
         if candidate.is_file():
-            pythonw = candidate
-    elif pythonw.name.lower() != "pythonw.exe":
-        candidate = Path(sys.executable).parent / "pythonw.exe"
-        pythonw = candidate if candidate.is_file() else pythonw
+            return candidate
+    if exe.name.lower() in ("setup.exe", "ytdpreviewer.exe"):
+        return None
 
-    (install_dir / "pythonw.txt").write_text(str(pythonw.resolve()), encoding="utf-8")
-    pyw = str(pythonw.resolve()).replace('"', '""')
+    sibling = exe.parent / "pythonw.exe"
+    if sibling.is_file():
+        return sibling
+
+    local = os.environ.get("LOCALAPPDATA", "")
+    for ver in ("313", "312", "311", "310"):
+        candidate = Path(local) / "Programs" / "Python" / f"Python{ver}" / "pythonw.exe"
+        if candidate.is_file():
+            return candidate
+
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        proc = subprocess.run(
+            ["where", "pythonw"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=flags,
+        )
+        if proc.returncode == 0:
+            for line in proc.stdout.splitlines():
+                path = Path(line.strip())
+                if path.is_file() and path.name.lower() == "pythonw.exe":
+                    return path
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
+def _write_thumbnail_cmd_for_exe(install_dir: Path) -> None:
+    app_exe = install_dir / "YTDPreviewer.exe"
+    if not app_exe.is_file():
+        return
+    exe = str(app_exe.resolve()).replace('"', '""')
     (install_dir / "thumbnail.cmd").write_text(
-        f'@echo off\r\n"{pyw}" "%~dp0thumbnail.pyw" %*\r\n',
+        "\r\n".join(
+            [
+                "@echo off",
+                "setlocal",
+                f'set "EXE={exe}"',
+                'set "SRC=%~1"',
+                'set "OUT=%~2"',
+                'set "SZ=%~3"',
+                'if /I "%~4"=="ydd" (',
+                '  "%EXE%" --ydd-thumbnail "%SRC%" "%OUT%" "%SZ%"',
+                "  exit /b %ERRORLEVEL%",
+                ")",
+                'if /I "%~5"=="fast" (',
+                '  "%EXE%" --thumbnail "%SRC%" "%OUT%" "%SZ%" --fast',
+                ") else (",
+                '  "%EXE%" --thumbnail "%SRC%" "%OUT%" "%SZ%"',
+                ")",
+                "endlocal",
+                "",
+            ]
+        ),
         encoding="ascii",
     )
+
+
+def _write_thumbnail_launcher(install_dir: Path) -> None:
+    pythonw = _resolve_pythonw_for_thumbnails()
+    cfg = install_dir / "pythonw.txt"
+    if pythonw is not None:
+        cfg.write_text(str(pythonw.resolve()), encoding="utf-8")
+        pyw = str(pythonw.resolve()).replace('"', '""')
+        (install_dir / "thumbnail.cmd").write_text(
+            f'@echo off\r\n"{pyw}" "%~dp0thumbnail.pyw" %*\r\n',
+            encoding="ascii",
+        )
+        return
+
+    if cfg.is_file():
+        try:
+            line = cfg.read_text(encoding="utf-8").strip().lower()
+            if line.endswith("setup.exe") or line.endswith("ytdpreviewer.exe"):
+                cfg.unlink()
+        except OSError:
+            pass
+
+    _write_thumbnail_cmd_for_exe(install_dir)
 
 
 def _seed_thumb_roots(*folders: Path) -> None:
@@ -525,15 +602,11 @@ def _register_ytd_thumbnail(
     _disable_thumbnail_type_overlay(ytd_spec)
     # IconHandler on the same .NET CLSID breaks Explorer thumbnails (8007007E).
     # Static ytd.ico is set in _register_extension; previews use IThumbnailProvider only.
-    _register_ydd_thumbnail(install_dir, shell_admin=shell_admin)
+    _unregister_ydd_thumbnail_shellex(shell_admin=shell_admin)
 
 
-def _register_ydd_thumbnail(install_dir: Path, *, shell_admin: bool = False) -> None:
-    """Register IThumbnailProvider shellex for .ydd (same YtdThumbnail.dll as .ytd)."""
-    if not (install_dir / "YtdThumbnail.dll").is_file():
-        print("WARNING: YtdThumbnail.dll not found — .ydd previews need shell\\YtdThumbnail build.")
-        return
-
+def _unregister_ydd_thumbnail_shellex(*, shell_admin: bool = False) -> None:
+    """Remove Explorer thumbnail handler for .ydd (static ydd.ico only, no render)."""
     ydd_spec = next(s for s in EXTENSIONS if s.ext == ".ydd")
     use_system = shell_admin and _is_admin()
     shellex_targets = (
@@ -543,21 +616,9 @@ def _register_ydd_thumbnail(install_dir: Path, *, shell_admin: bool = False) -> 
     )
     hives = [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER] if use_system else [winreg.HKEY_CURRENT_USER]
     for hive in hives:
-        _unregister_thumbnail_shell_extras(
-            clsid=YDD_THUMB_CLSID, ext=ydd_spec.ext, hive=hive
-        )
+        _unregister_thumbnail_shell_extras(clsid=YDD_THUMB_CLSID, ext=ydd_spec.ext, hive=hive)
         for base in shellex_targets:
-            with winreg.CreateKey(hive, base) as key:
-                winreg.SetValueEx(key, None, 0, winreg.REG_SZ, YDD_THUMB_CLSID)
-        _register_thumbnail_shell_extras(
-            clsid=YDD_THUMB_CLSID,
-            ext=ydd_spec.ext,
-            label="YTD Previewer drawable thumbnail",
-            hive=hive,
-        )
-
-    _apply_thumbnail_com_extras(YDD_THUMB_CLSID)
-    _disable_thumbnail_type_overlay(ydd_spec)
+            _delete_tree(base, hive=hive)
 
 
 def _unregister_sharpshell(install_dir: Path | None, project_root: Path | None) -> bool:
@@ -661,15 +722,33 @@ def _clear_thumbnail_caches(install_dir: Path | None = None) -> None:
 
 
 def _restart_explorer() -> None:
-    if _explorer_is_running():
-        print("  проводник уже работает.", flush=True)
-        return
+    """Kill and restart Explorer (refresh shell / thumbnail handlers)."""
+    _stop_explorer()
+    time.sleep(0.5)
     _start_explorer()
-    time.sleep(0.3)
+    time.sleep(0.4)
     if _explorer_is_running():
         print("  проводник запущен.", flush=True)
     else:
-        print("  если рабочий стол пустой: Ctrl+Shift+Esc → Файл → Запустить explorer.exe", flush=True)
+        print(
+            "  если рабочий стол пустой: Ctrl+Shift+Esc → Файл → Запустить explorer.exe",
+            flush=True,
+        )
+
+
+def _ensure_explorer_running() -> None:
+    if _explorer_is_running():
+        return
+    _start_explorer()
+    time.sleep(0.4)
+    if not _explorer_is_running():
+        explorer = Path(os.environ.get("WINDIR", r"C:\Windows")) / "explorer.exe"
+        try:
+            ctypes.windll.shell32.ShellExecuteW(
+                None, "open", str(explorer), None, None, 1
+            )
+        except OSError:
+            pass
 
 
 def _delete_tree(key_path: str, hive: int = winreg.HKEY_CURRENT_USER) -> None:
@@ -874,6 +953,9 @@ def repair_installation(
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, autostart_cmd)
 
+    _write_thumbnail_pyw(target, target, dev=False)
+    _write_thumbnail_launcher(target)
+    _unregister_ydd_thumbnail_shellex(shell_admin=_is_admin())
     if register_thumbnails:
         _register_ytd_thumbnail(target, target, project_root, dev=False, shell_admin=_is_admin())
 
@@ -897,6 +979,16 @@ def diagnose_registry(install_dir: Path | None = None) -> None:
             print(f"Open {spec.ext}: (not set)", flush=True)
     print(f"HKLM thumb COM: {_com_clsid_registered_hklm(YTD_THUMB_CLSID)}", flush=True)
     print(f"HKLM shellex .ytd: {_shellex_registered(winreg.HKEY_LOCAL_MACHINE, '.ytd')}", flush=True)
+    pyw_cfg = target / "pythonw.txt"
+    if pyw_cfg.is_file():
+        pyw_line = pyw_cfg.read_text(encoding="utf-8").strip()
+        print(f"pythonw.txt: {pyw_line}", flush=True)
+        if pyw_line.lower().endswith("setup.exe"):
+            print(
+                "ОШИБКА: pythonw.txt указывает на setup.exe — при превью в проводнике "
+                "открывается установщик. Запустите: python -m ytdpreviewer.setup_windows repair",
+                flush=True,
+            )
 
 
 def _register_shell_verb(prog_id: str, verb: str, label: str, command: str) -> None:
@@ -1050,22 +1142,12 @@ def _stop_explorer() -> None:
 
 
 def _start_explorer() -> None:
-    """Start explorer.exe directly — never use ``cmd /c start`` (deadlocks with capture_output)."""
+    """Start explorer.exe — CREATE_NO_WINDOW hides the desktop shell."""
     explorer = Path(os.environ.get("WINDIR", r"C:\Windows")) / "explorer.exe"
     if not explorer.is_file():
         return
-    detach = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-    no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        subprocess.Popen(
-            [str(explorer)],
-            cwd=str(explorer.parent),
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=detach | no_window,
-            close_fds=True,
-        )
+        subprocess.Popen([str(explorer)], cwd=str(explorer.parent), close_fds=True)
         return
     except OSError:
         pass
@@ -1073,6 +1155,34 @@ def _start_explorer() -> None:
         ctypes.windll.shell32.ShellExecuteW(None, "open", str(explorer), None, None, 1)
     except OSError:
         pass
+
+
+def launch_background_app(install_dir: Path | None = None) -> bool:
+    """Start YTDPreviewer tray; ShellExecute avoids launching elevated from setup."""
+    target = (install_dir or default_install_dir()).resolve()
+    exe = target / "YTDPreviewer.exe"
+    if not exe.is_file():
+        return False
+    try:
+        rc = ctypes.windll.shell32.ShellExecuteW(
+            None, "open", str(exe), "--background", str(target), 0
+        )
+        if rc > 32:
+            return True
+    except OSError:
+        pass
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    detached = getattr(subprocess, "DETACHED_PROCESS", 0)
+    try:
+        subprocess.Popen(
+            [str(exe), "--background"],
+            cwd=str(target),
+            creationflags=flags | detached,
+            close_fds=True,
+        )
+        return True
+    except OSError:
+        return False
 
 
 def _programdata_install_dir() -> Path:
@@ -1140,9 +1250,7 @@ def _register_sharpshell_explorer(dll_path_or_dir: Path, project_root: Path) -> 
             if proc.stderr:
                 print(proc.stderr.strip(), flush=True)
             return False
-        return _com_clsid_registered_hklm(YTD_THUMB_CLSID) and _com_clsid_registered_hklm(
-            YDD_THUMB_CLSID
-        )
+        return _com_clsid_registered_hklm(YTD_THUMB_CLSID)
     except (OSError, subprocess.TimeoutExpired) as exc:
         print(f"WARNING: RegisterShell failed: {exc}", flush=True)
         return False
@@ -1185,6 +1293,7 @@ def _ensure_thumbnail_dll(
     if shell_admin:
         _stop_explorer()
         if _try_copy(primary):
+            _start_explorer()
             return primary
 
         pd_dir = _programdata_install_dir()
@@ -1192,7 +1301,9 @@ def _ensure_thumbnail_dll(
         pd_dll = pd_dir / "YtdThumbnail.dll"
         if _try_copy(pd_dll):
             print(f"NOTE: DLL installed to {pd_dll} (Explorer had locked %LocalAppData% copy).")
+            _start_explorer()
             return pd_dll
+        _start_explorer()
 
     print(f"WARNING: Could not copy DLL to {install_dir} (file locked?).")
     print(f"  Using build output for COM registration: {src}")
@@ -1314,8 +1425,12 @@ def _schedule_delete_on_reboot(path: Path) -> None:
         pass
 
 
-def _release_install_locks(install_dir: Path) -> None:
-    _stop_running_app(install_dir)
+def _release_install_locks(
+    install_dir: Path,
+    *,
+    except_pid: int | None = None,
+) -> None:
+    _stop_running_app(install_dir, except_pid=except_pid)
     _stop_explorer()
 
 
@@ -1346,12 +1461,17 @@ def _materialize_payload(source_dir: Path, dest_dir: Path) -> None:
             shutil.copy2(src_shell, dest_dir / shell_name)
 
 
-def _promote_staged_install(staging: Path, install_dir: Path) -> None:
+def _promote_staged_install(
+    staging: Path,
+    install_dir: Path,
+    *,
+    except_pid: int | None = None,
+) -> None:
     """Replace *install_dir* with contents of *staging* (avoids overwriting locked files in place)."""
     if not staging.is_dir():
         raise FileNotFoundError(f"Нет временной папки установки: {staging}")
 
-    _release_install_locks(install_dir)
+    _release_install_locks(install_dir, except_pid=except_pid)
 
     if not install_dir.exists():
         os.replace(staging, install_dir)
@@ -1372,7 +1492,7 @@ def _promote_staged_install(staging: Path, install_dir: Path) -> None:
             if not _is_locked_os_error(exc):
                 raise
             last_err = exc
-            _release_install_locks(install_dir)
+            _release_install_locks(install_dir, except_pid=except_pid)
             time.sleep(0.8)
 
     if last_err is not None:
@@ -1399,11 +1519,16 @@ def _promote_staged_install(staging: Path, install_dir: Path) -> None:
         _schedule_delete_on_reboot(legacy)
 
 
-def copy_payload(source_dir: Path, install_dir: Path) -> None:
+def copy_payload(
+    source_dir: Path,
+    install_dir: Path,
+    *,
+    except_pid: int | None = None,
+) -> None:
     staging = install_dir.parent / f"{install_dir.name}{_INSTALL_STAGING_SUFFIX}"
     shutil.rmtree(staging, ignore_errors=True)
     _materialize_payload(source_dir, staging)
-    _promote_staged_install(staging, install_dir)
+    _promote_staged_install(staging, install_dir, except_pid=except_pid)
 
 
 def _ensure_bundled_exe(project_root: Path, install_dir: Path) -> Path | None:
@@ -1619,6 +1744,7 @@ def install_with_progress(
     *,
     dev: bool = False,
     shell_admin: bool = False,
+    explorer_thumbnails: bool | None = None,
     on_progress: ProgressCallback | None = None,
     except_pid: int | None = None,
 ) -> Path:
@@ -1630,6 +1756,7 @@ def install_with_progress(
     dev_root = Path(__file__).resolve().parent.parent
     source = (source_dir or _bundle_source_dir(dev_root)).resolve()
     project_root = _resolve_project_root(source, dev=dev)
+    enable_thumbs = explorer_thumbnails if explorer_thumbnails is not None else shell_admin
 
     step(5, "Остановка старых процессов...")
     _stop_running_app(target, except_pid=except_pid)
@@ -1643,7 +1770,7 @@ def install_with_progress(
         time.sleep(0.6)
 
     step(15, "Копирование файлов программы...")
-    copy_payload(source, target)
+    copy_payload(source, target, except_pid=except_pid)
 
     step(18, "Запуск проводника...")
     _start_explorer()
@@ -1662,7 +1789,8 @@ def install_with_progress(
 
     step(28, "Настройка компонентов...")
     _write_export_pyw(target, project_root, dev=dev)
-    _write_thumbnail_pyw(target, project_root, dev=dev)
+    thumb_root = project_root if dev else target
+    _write_thumbnail_pyw(target, thumb_root, dev=dev)
     _write_thumbnail_launcher(target)
 
     pythonw = Path(sys.executable).with_name("pythonw.exe")
@@ -1697,9 +1825,13 @@ def install_with_progress(
     warm_cmd = _warm_thumbs_command(target, project_root, pythonw, dev=dev)
     _register_directory_warm_verb(warm_cmd)
 
-    step(68, "Превью .ytd / .ydd в проводнике...")
-    _register_ytd_thumbnail(target, source, project_root, dev=dev, shell_admin=shell_admin)
-    _seed_thumb_roots(project_root, target)
+    if enable_thumbs:
+        step(68, "Превью .ytd в проводнике...")
+        _register_ytd_thumbnail(target, source, project_root, dev=dev, shell_admin=shell_admin)
+        _seed_thumb_roots(project_root, target)
+    else:
+        step(68, "Превью в проводнике отключено...")
+        _unregister_ydd_thumbnail_shellex(shell_admin=shell_admin and _is_admin())
 
     step(82, "Автозапуск...")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
@@ -1707,6 +1839,18 @@ def install_with_progress(
 
     step(92, "Обновление оболочки Windows...")
     _notify_shell()
+
+    if enable_thumbs and shell_admin and _is_admin():
+        step(96, "Очистка кэша миниатюр...")
+        _clear_thumbnail_caches(target)
+        step(98, "Перезапуск проводника...")
+        _restart_explorer()
+    else:
+        step(98, "Запуск проводника...")
+        _ensure_explorer_running()
+
+    step(99, "Запуск YTD Previewer...")
+    launch_background_app(target)
 
     step(100, "Готово")
     return target
@@ -1721,15 +1865,10 @@ def register_explorer_thumbnails_admin(install_dir: Path | None = None) -> bool:
     _stop_explorer()
     ok = _register_ytd_thumbnail(target, target, target, dev=False, shell_admin=True)
     _apply_thumbnail_com_extras(YTD_THUMB_CLSID)
-    _apply_thumbnail_com_extras(YDD_THUMB_CLSID)
     _clear_thumbnail_caches(target)
     _notify_shell()
     _restart_explorer()
-    return (
-        ok
-        and _com_clsid_registered_hklm(YTD_THUMB_CLSID)
-        and _com_clsid_registered_hklm(YDD_THUMB_CLSID)
-    )
+    return ok and _com_clsid_registered_hklm(YTD_THUMB_CLSID)
 
 
 def request_admin_explorer_thumbnails(install_dir: Path) -> bool:
@@ -1898,23 +2037,20 @@ def _print_thumbnail_hint(install_dir: Path, *, shell_admin: bool = False) -> No
         print("Превью в проводнике: соберите shell\\YtdThumbnail (dotnet build) и переустановите.")
         return
     hkcu_ytd = _shellex_registered(winreg.HKEY_CURRENT_USER, ".ytd", clsid=YTD_THUMB_CLSID)
-    hkcu_ydd = _shellex_registered(winreg.HKEY_CURRENT_USER, ".ydd", clsid=YDD_THUMB_CLSID)
     hklm_ytd = _shellex_registered(winreg.HKEY_LOCAL_MACHINE, ".ytd", clsid=YTD_THUMB_CLSID)
-    hklm_ydd = _shellex_registered(winreg.HKEY_LOCAL_MACHINE, ".ydd", clsid=YDD_THUMB_CLSID)
     hklm_com_ytd = _com_clsid_registered_hklm(YTD_THUMB_CLSID)
-    hklm_com_ydd = _com_clsid_registered_hklm(YDD_THUMB_CLSID)
-    if shell_admin and hklm_ytd and hklm_ydd and hklm_com_ytd and hklm_com_ydd:
-        print("Превью .ytd и .ydd в проводнике: зарегистрировано (HKLM).")
+    if shell_admin and hklm_ytd and hklm_com_ytd:
+        print("Превью .ytd в проводнике: зарегистрировано (HKLM). .ydd — только иконка.")
         print("  Затем: scripts\\refresh_explorer_thumbs.bat")
-    elif shell_admin and (not hklm_com_ytd or not hklm_com_ydd):
-        print("ОШИБКА: COM не попал в HKLM — превью в проводнике не заработает.")
+    elif shell_admin and not hklm_com_ytd:
+        print("ОШИБКА: COM не попал в HKLM — превью .ytd в проводнике не заработает.")
         print("  Повторите scripts\\install_shell_admin.bat от имени администратора.")
-    elif hkcu_ytd and hkcu_ydd:
-        print("Превью .ytd/.ydd: COM установлен. Для Windows 11 (HKLM) запустите от администратора:")
+    elif hkcu_ytd:
+        print("Превью .ytd: COM установлен. Для Windows 11 (HKLM) запустите от администратора:")
         print("  scripts\\install_shell_admin.bat")
         print("  затем scripts\\refresh_explorer_thumbs.bat")
     else:
-        print("Превью в проводнике: обработчик не полный — повторите install.bat / install_shell_admin.bat")
+        print("Превью .ytd в проводнике: обработчик не полный — повторите install.bat / install_shell_admin.bat")
 
 
 if __name__ == "__main__":

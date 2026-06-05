@@ -2,10 +2,12 @@
 # pyinstaller setup.spec  (run after ytdpreviewer.spec + build.bat stage)
 # onedir layout — avoids "Failed to load Python DLL" in one-file temp (_MEI*).
 
+import os
 import sys
 from pathlib import Path
 
 ROOT = Path(SPECPATH)
+SETUP_COLLECT_NAME = os.environ.get("SETUP_COLLECT_NAME", "setup_build").strip() or "setup_build"
 sys.path.insert(0, str(ROOT))
 from pyinstaller_tk_datas import tkinter_datas_and_binaries  # noqa: E402
 bundle_zip = ROOT / "dist" / "app_bundle.zip"
@@ -81,6 +83,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(ROOT / "assets" / "app.ico") if (ROOT / "assets" / "app.ico").is_file() else None,
+    uac_admin=True,
 )
 coll = COLLECT(
     exe,
@@ -89,5 +92,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="setup_build",
+    name=SETUP_COLLECT_NAME,
 )

@@ -75,6 +75,19 @@ def _run_thumbnail_cli(args: list[str]) -> bool:
     return True
 
 
+def _run_apply_update_cli(args: list[str]) -> bool:
+    if "--apply-update" not in args:
+        return False
+    idx = args.index("--apply-update")
+    rest = args[idx + 1 :]
+    if len(rest) < 2:
+        raise SystemExit(2)
+    from ytdpreviewer.apply_update import run_apply_update
+
+    run_apply_update(Path(rest[0]), Path(rest[1]))
+    raise SystemExit(0)
+
+
 def _run_warm_thumbs_cli(args: list[str]) -> bool:
     if "--warm-ytd-thumbs" not in args:
         return False
@@ -94,6 +107,9 @@ def _run_warm_thumbs_cli(args: list[str]) -> bool:
 
 def main() -> None:
     args = sys.argv[1:]
+
+    if _run_apply_update_cli(args):
+        return
 
     if _run_thumbnail_cli(args):
         return
@@ -172,6 +188,8 @@ def main() -> None:
 if __name__ == "__main__":
     argv = sys.argv[1:]
     try:
+        if _run_apply_update_cli(argv):
+            raise SystemExit(0)
         if _run_thumbnail_cli(argv):
             raise SystemExit(0)
         if _run_ydd_thumbnail_cli(argv):

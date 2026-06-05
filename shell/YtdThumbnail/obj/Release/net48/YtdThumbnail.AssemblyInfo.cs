@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("YtdThumbnail")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ddfb43be577ed9b8774ba2f66f36cd67ecc23d93")]
 [assembly: System.Reflection.AssemblyProductAttribute("YtdThumbnail")]
 [assembly: System.Reflection.AssemblyTitleAttribute("YtdThumbnail")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

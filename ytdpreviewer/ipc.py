@@ -21,14 +21,23 @@ def send_path(path: str, timeout: float = 0.08) -> bool:
         return False
 
 
-def start_listener(on_path: Callable[[str], None]) -> threading.Thread:
+def start_listener(on_path: Callable[[str], None]) -> threading.Thread | None:
     """Start a daemon thread that receives paths and calls on_path."""
+    ready = threading.Event()
+    bound = {"ok": False}
 
     def run() -> None:
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((HOST, PORT))
-        server.listen(5)
+        try:
+            server.bind((HOST, PORT))
+            server.listen(5)
+        except OSError:
+            server.close()
+            ready.set()
+            return
+        bound["ok"] = True
+        ready.set()
         try:
             while True:
                 conn, _ = server.accept()
@@ -44,4 +53,5 @@ def start_listener(on_path: Callable[[str], None]) -> threading.Thread:
 
     thread = threading.Thread(target=run, name="ytd-ipc", daemon=True)
     thread.start()
-    return thread
+    ready.wait(timeout=3.0)
+    return thread if bound["ok"] else None
