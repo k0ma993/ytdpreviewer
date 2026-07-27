@@ -137,13 +137,8 @@ def install_ui_pump(root: tk.Tk) -> None:
 
 
 def _enqueue_ui(fn: Callable[[], None]) -> None:
+    """Queue work for the Tk-owned pump without calling Tk from this thread."""
     _ui_queue.put(fn)
-    root = _ui_root
-    if root is not None:
-        try:
-            root.after(0, _flush_ui_queue)
-        except tk.TclError:
-            pass
 
 
 def _tray_messagebox(
@@ -872,10 +867,7 @@ def run_manual_update_check(
                     root, inst, result, on_quit=on_quit
                 )
 
-            try:
-                root.after(0, finish)
-            except tk.TclError:
-                _enqueue_ui(finish)
+            _enqueue_ui(finish)
         except Exception as exc:
             def show_error() -> None:
                 try:
@@ -889,10 +881,7 @@ def run_manual_update_check(
                     kind="error",
                 )
 
-            try:
-                root.after(0, show_error)
-            except tk.TclError:
-                _enqueue_ui(show_error)
+            _enqueue_ui(show_error)
 
     threading.Thread(target=bg_check, name="ytd-update-manual", daemon=True).start()
 
