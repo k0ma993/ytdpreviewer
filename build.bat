@@ -30,6 +30,8 @@ if errorlevel 1 goto :fail
 echo [4/6] Explorer thumbnails DLL...
 dotnet build shell\YtdThumbnail\YtdThumbnail.csproj -c Release >nul 2>&1
 dotnet build shell\RegisterShell\RegisterShell.csproj -c Release >nul 2>&1
+call scripts\build_ydd_properties.bat
+if errorlevel 1 goto :fail
 if exist "shell\YtdThumbnail\bin\Release\net48\YtdThumbnail.dll" (
   copy /Y "shell\YtdThumbnail\bin\Release\net48\YtdThumbnail.dll" "dist\YTDPreviewer\" >nul
   if exist "shell\YtdThumbnail\bin\Release\net48\SharpShell.dll" copy /Y "shell\YtdThumbnail\bin\Release\net48\SharpShell.dll" "dist\YTDPreviewer\" >nul
@@ -37,6 +39,8 @@ if exist "shell\YtdThumbnail\bin\Release\net48\YtdThumbnail.dll" (
 if exist "shell\RegisterShell\bin\Release\net48\RegisterShell.exe" (
   copy /Y "shell\RegisterShell\bin\Release\net48\RegisterShell.exe" "dist\YTDPreviewer\" >nul
 )
+copy /Y "build\YddProperties\YddProperties.dll" "dist\YTDPreviewer\" >nul
+copy /Y "shell\YddProperties\YTDPreviewer.propdesc" "dist\YTDPreviewer\" >nul
 
 echo [5/6] Installer bundle...
 if exist "dist\release" rmdir /s /q "dist\release"
@@ -79,6 +83,7 @@ popd
 echo [6/6] Setup (onedir)...
 echo   Tip: close any setup.exe installer windows before this step.
 set "SETUP_COLLECT_NAME=setup_build"
+set "SETUP_FINAL_DIR=setup"
 call :free_setup_build
 echo   PyInstaller output folder: dist\!SETUP_COLLECT_NAME!
 %PY% -m PyInstaller setup.spec --noconfirm
@@ -93,29 +98,28 @@ if exist "dist\setup" (
 )
 if not exist "dist\setup" move "dist\!SETUP_COLLECT_NAME!" "dist\setup" >nul 2>&1
 if not exist "dist\setup\setup.exe" (
-  if /I not "!SETUP_COLLECT_NAME!"=="setup_build" (
-    mkdir "dist\setup" 2>nul
-    xcopy /E /I /Y "dist\!SETUP_COLLECT_NAME!\*" "dist\setup\" >nul 2>&1
-  )
+  set "SETUP_FINAL_DIR=!SETUP_COLLECT_NAME!"
+)
+if exist "dist\setup\setup.exe" if exist "dist\!SETUP_COLLECT_NAME!\setup.exe" (
+  rem The old elevated installer may still lock dist\setup. Never package that stale folder.
+  set "SETUP_FINAL_DIR=!SETUP_COLLECT_NAME!"
 )
 
 if exist "dist\setup.exe" del /f /q "dist\setup.exe" 2>nul
 
 echo [6b/6] setup.zip (portable installer folder)...
 if exist "dist\setup.zip" del /f /q "dist\setup.zip" 2>nul
-if exist "dist\setup\setup.exe" (
+if exist "dist\!SETUP_FINAL_DIR!\setup.exe" (
   pushd "dist"
-  powershell -NoProfile -Command "Compress-Archive -Path 'setup\*' -DestinationPath 'setup.zip' -Force"
+  powershell -NoProfile -Command "Compress-Archive -Path '!SETUP_FINAL_DIR!\*' -DestinationPath 'setup.zip' -Force"
   popd
 )
 
 echo.
 echo Done:
-if exist "dist\setup\setup.exe" (
-  echo   dist\setup\setup.exe
+if exist "dist\!SETUP_FINAL_DIR!\setup.exe" (
+  echo   dist\!SETUP_FINAL_DIR!\setup.exe
   echo   dist\setup.zip
-) else if exist "dist\!SETUP_COLLECT_NAME!\setup.exe" (
-  echo   dist\!SETUP_COLLECT_NAME!\setup.exe   ^(dist\setup was locked^)
 ) else (
   echo   setup.exe not found in dist\setup
 )
@@ -141,4 +145,3 @@ echo.
 echo BUILD FAILED.
 if not defined CI pause
 exit /b 1
-

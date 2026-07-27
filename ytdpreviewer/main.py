@@ -6,7 +6,7 @@ import sys
 import traceback
 from pathlib import Path
 
-from ytdpreviewer.ydd_thumbnail import MAX_THUMB_SIDE
+MAX_YDD_THUMB_SIDE = 512
 
 
 def _collect_paths(argv: list[str]) -> list[Path]:
@@ -46,7 +46,7 @@ def _run_ydd_thumbnail_cli(args: list[str]) -> bool:
     except ValueError:
         raise SystemExit(2) from None
     ok = render_ydd_thumbnail_file(
-        src, out, max_side=max(32, min(size, MAX_THUMB_SIDE))
+        src, out, max_side=max(32, min(size, MAX_YDD_THUMB_SIDE))
     )
     if not ok:
         raise SystemExit(1)

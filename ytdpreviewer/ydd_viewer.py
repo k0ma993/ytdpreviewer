@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import math
 import shutil
 import subprocess
@@ -26,7 +27,15 @@ from pyglet.gl import (
     GL_UNSIGNED_BYTE,
     GL_DEPTH_TEST,
     GL_LEQUAL,
+    GL_LIGHT0,
+    GL_AMBIENT,
+    GL_DIFFUSE,
+    GL_POSITION,
     GL_LIGHTING,
+    GL_COLOR_MATERIAL,
+    GL_FRONT_AND_BACK,
+    GL_AMBIENT_AND_DIFFUSE,
+    GL_NORMALIZE,
     GL_LINES,
     GL_MODELVIEW,
     GL_MODULATE,
@@ -41,9 +50,15 @@ from pyglet.gl import (
     GL_TEXTURE_ENV_MODE,
     GL_TEXTURE_WRAP_S,
     GL_TEXTURE_WRAP_T,
+    GL_TEXTURE0,
+    GL_TEXTURE1,
     GL_REPEAT,
     GL_SCISSOR_TEST,
     GL_TRIANGLES,
+    GL_VERTEX_SHADER,
+    GL_FRAGMENT_SHADER,
+    GL_COMPILE_STATUS,
+    GL_LINK_STATUS,
     glBegin,
     glBindTexture,
     glBlendFunc,
@@ -55,6 +70,8 @@ from pyglet.gl import (
     glEnable,
     glEnd,
     glLineWidth,
+    glLightfv,
+    glColorMaterial,
     glLoadIdentity,
     glMatrixMode,
     glOrtho,
@@ -70,6 +87,23 @@ from pyglet.gl import (
     glReadPixels,
     glVertex3f,
     glViewport,
+    glActiveTexture,
+    glAttachShader,
+    glCompileShader,
+    glCreateProgram,
+    glCreateShader,
+    glGetProgramInfoLog,
+    glGetProgramiv,
+    glGetShaderInfoLog,
+    glGetShaderiv,
+    glGetUniformLocation,
+    glLinkProgram,
+    glShaderSource,
+    glUniform1i,
+    glUseProgram,
+    GLchar,
+    GLint,
+    GLfloat,
 )
 from pyglet.gl.glu import gluLookAt, gluPerspective
 from pyglet.window import key, mouse
@@ -110,6 +144,141 @@ UI_FONT_SIZE = 12
 UI_FONT_SIZE_SMALL = 10
 TEXTURE_PANEL_MAX_ROWS = 8
 LOD_TITLE_COLOR = (205, 178, 70)
+
+MATERIAL_VERTEX_SHADER = """
+#version 120
+varying vec3 eye_position;
+varying vec3 surface_normal;
+varying vec2 texcoord;
+varying vec4 vertex_color;
+
+void main() {
+    vec4 eye = gl_ModelViewMatrix * gl_Vertex;
+    eye_position = eye.xyz;
+    surface_normal = normalize(gl_NormalMatrix * gl_Normal);
+    texcoord = gl_MultiTexCoord0.xy;
+    vertex_color = gl_Color;
+    gl_Position = gl_ProjectionMatrix * eye;
+}
+"""
+
+MATERIAL_FRAGMENT_SHADER = """
+#version 120
+uniform sampler2D diffuse_map;
+uniform sampler2D normal_map;
+uniform bool use_normal_map;
+uniform bool use_lighting;
+
+varying vec3 eye_position;
+varying vec3 surface_normal;
+varying vec2 texcoord;
+varying vec4 vertex_color;
+
+void main() {
+    vec4 base = texture2D(diffuse_map, texcoord) * vertex_color;
+    if (!use_lighting) {
+        gl_FragColor = base;
+        return;
+    }
+
+    vec3 normal = normalize(surface_normal);
+    if (use_normal_map) {
+        vec3 position_dx = dFdx(eye_position);
+        vec3 position_dy = dFdy(eye_position);
+        vec2 uv_dx = dFdx(texcoord);
+        vec2 uv_dy = dFdy(texcoord);
+        vec3 tangent = normalize(position_dx * uv_dy.y - position_dy * uv_dx.y);
+        vec3 bitangent = normalize(-position_dx * uv_dy.x + position_dy * uv_dx.x);
+        vec3 mapped = texture2D(normal_map, texcoord).xyz * 2.0 - 1.0;
+        mapped.y = -mapped.y;
+        normal = normalize(tangent * mapped.x + bitangent * mapped.y + normal * mapped.z);
+    }
+
+    vec3 light_direction = normalize(vec3(-0.35, 0.75, 0.60));
+    float diffuse_light = max(dot(normal, light_direction), 0.0);
+    vec3 color = base.rgb * (0.30 + 0.90 * diffuse_light);
+
+    gl_FragColor = vec4(color, base.a);
+}
+"""
+
+
+def _compile_shader(shader_type: int, source: str) -> int:
+    shader = glCreateShader(shader_type)
+    encoded = source.encode("utf-8")
+    buffer = ctypes.create_string_buffer(encoded)
+    pointer = ctypes.cast(buffer, ctypes.POINTER(GLchar))
+    glShaderSource(shader, 1, ctypes.byref(pointer), None)
+    glCompileShader(shader)
+    status = GLint()
+    glGetShaderiv(shader, GL_COMPILE_STATUS, ctypes.byref(status))
+    if not status.value:
+        length = 4096
+        log = ctypes.create_string_buffer(length)
+        glGetShaderInfoLog(shader, length, None, log)
+        raise RuntimeError(log.value.decode("utf-8", "replace"))
+    return int(shader)
+
+
+def _create_material_program() -> int:
+    vertex = _compile_shader(GL_VERTEX_SHADER, MATERIAL_VERTEX_SHADER)
+    fragment = _compile_shader(GL_FRAGMENT_SHADER, MATERIAL_FRAGMENT_SHADER)
+    program = glCreateProgram()
+    glAttachShader(program, vertex)
+    glAttachShader(program, fragment)
+    glLinkProgram(program)
+    status = GLint()
+    glGetProgramiv(program, GL_LINK_STATUS, ctypes.byref(status))
+    if not status.value:
+        length = 4096
+        log = ctypes.create_string_buffer(length)
+        glGetProgramInfoLog(program, length, None, log)
+        raise RuntimeError(log.value.decode("utf-8", "replace"))
+    return int(program)
+
+
+class MaterialTextureGroup(pyglet.graphics.Group):
+    def __init__(
+        self,
+        program: int,
+        diffuse,
+        normal,
+        *,
+        use_normal: bool,
+        use_lighting: bool,
+    ) -> None:
+        super().__init__()
+        self.program = program
+        self.diffuse = diffuse
+        self.normal = normal or diffuse
+        self.use_normal = bool(normal and use_normal)
+        self.use_lighting = use_lighting
+
+    def __eq__(self, other) -> bool:
+        return self is other
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def set_state(self) -> None:
+        glUseProgram(self.program)
+        for unit, uniform, texture in (
+            (GL_TEXTURE0, b"diffuse_map", self.diffuse),
+            (GL_TEXTURE1, b"normal_map", self.normal),
+        ):
+            glActiveTexture(unit)
+            glEnable(texture.target)
+            glBindTexture(texture.target, texture.id)
+            glUniform1i(glGetUniformLocation(self.program, uniform), unit - GL_TEXTURE0)
+        glUniform1i(glGetUniformLocation(self.program, b"use_normal_map"), self.use_normal)
+        glUniform1i(glGetUniformLocation(self.program, b"use_lighting"), self.use_lighting)
+        glActiveTexture(GL_TEXTURE0)
+
+    def unset_state(self) -> None:
+        glUseProgram(0)
+        glActiveTexture(GL_TEXTURE1)
+        glDisable(GL_TEXTURE_2D)
+        glActiveTexture(GL_TEXTURE0)
 
 
 def _gta_to_view_positions(positions: np.ndarray) -> np.ndarray:
@@ -276,6 +445,8 @@ class ViewerSettings:
     show_geometry: bool = True
     show_vertices: bool = False
     show_texture: bool = True
+    show_lighting: bool = True
+    show_normal_map: bool = True
     show_mesh_vertex_colours: bool = False
     mesh_color: tuple[float, float, float] = FALLBACK
     edge_color: tuple[float, float, float] = MESH_GRID_COLOR
@@ -343,6 +514,8 @@ class YddViewerWindow(pyglet.window.Window):
         self._btn_edges: tuple[int, int, int, int] | None = None
         self._btn_vertices: tuple[int, int, int, int] | None = None
         self._btn_texture: tuple[int, int, int, int] | None = None
+        self._btn_lighting: tuple[int, int, int, int] | None = None
+        self._btn_normal_map: tuple[int, int, int, int] | None = None
         self._btn_vtx_colours: tuple[int, int, int, int] | None = None
         self._btn_floor_grid: tuple[int, int, int, int] | None = None
         self._btn_mesh_color: tuple[int, int, int, int] | None = None
@@ -357,6 +530,7 @@ class YddViewerWindow(pyglet.window.Window):
         self._texture_scroll = 0
         self._texture_panel_rect: tuple[int, int, int, int] | None = None
         self._gpu_meshes: list[GpuMesh] = []
+        self._material_program: int | None = None
         self._init_texture_selection()
         default_key = default_diffuse_texture_key(self.model)
         if default_key:
@@ -431,19 +605,23 @@ class YddViewerWindow(pyglet.window.Window):
         )
 
     def _bounds(self) -> tuple[np.ndarray, float, float]:
-        points: list[tuple[float, float, float]] = []
+        minimum: np.ndarray | None = None
+        maximum: np.ndarray | None = None
         for drawable in self.model.drawables_for_lod(self.lod):
             for mesh in drawable.meshes:
-                points.extend(_gta_to_view_positions(np.asarray(mesh.positions)).tolist())
-        if not points:
+                if len(mesh.positions) == 0:
+                    continue
+                points = _gta_to_view_positions(np.asarray(mesh.positions, dtype=np.float32))
+                mesh_min = points.min(axis=0)
+                mesh_max = points.max(axis=0)
+                minimum = mesh_min if minimum is None else np.minimum(minimum, mesh_min)
+                maximum = mesh_max if maximum is None else np.maximum(maximum, mesh_max)
+        if minimum is None or maximum is None:
             center = np.zeros(3, dtype=np.float64)
             return center, 1.0, 0.0
-        arr = np.asarray(points, dtype=np.float64)
-        mn = arr.min(axis=0)
-        mx = arr.max(axis=0)
-        center = (mn + mx) * 0.5
-        radius = float(np.linalg.norm(mx - mn) * 0.5)
-        return center, max(radius, 0.05), float(mn[1])
+        center = (minimum + maximum) * 0.5
+        radius = float(np.linalg.norm(maximum - minimum) * 0.5)
+        return center, max(radius, 0.05), float(minimum[1])
 
     def _init_texture_selection(self) -> None:
         names = self._all_texture_names()
@@ -602,6 +780,24 @@ class YddViewerWindow(pyglet.window.Window):
         self._rebuild_geometry(preserve_camera=True)
         self._status = f"Текстура: {'вкл' if self.settings.show_texture else 'выкл'}"
 
+    def _toggle_lighting(self) -> None:
+        self.settings.show_lighting = not self.settings.show_lighting
+        self._rebuild_geometry(preserve_camera=True)
+
+    def _toggle_normal_map(self) -> None:
+        self.settings.show_normal_map = not self.settings.show_normal_map
+        self._rebuild_geometry(preserve_camera=True)
+
+    def _toggle_edges(self) -> None:
+        self.settings.show_edges = not self.settings.show_edges
+        if self.settings.show_edges:
+            self._rebuild_geometry(preserve_camera=True)
+
+    def _toggle_vertices(self) -> None:
+        self.settings.show_vertices = not self.settings.show_vertices
+        if self.settings.show_vertices:
+            self._rebuild_geometry(preserve_camera=True)
+
     def _toggle_mesh_vertex_colours(self) -> None:
         meshes, verts, _sample = model_vertex_colour_stats(self.model, lod=self.lod)
         if meshes == 0:
@@ -670,6 +866,12 @@ class YddViewerWindow(pyglet.window.Window):
         self._status = f"Детализация: {LOD_LABELS.get(self.lod, self.lod)}"
 
     def _build_gpu(self) -> None:
+        if self._material_program is None:
+            try:
+                self.switch_to()
+                self._material_program = _create_material_program()
+            except Exception:
+                self._material_program = 0
         drawables = self.model.drawables_for_lod(self.lod)
         for drawable_index, drawable in enumerate(drawables):
             for mesh_index, mesh in enumerate(drawable.meshes):
@@ -698,7 +900,22 @@ class YddViewerWindow(pyglet.window.Window):
                     else None
                 )
                 if texture is not None:
-                    group = pyglet.graphics.TextureGroup(texture)
+                    normal_texture = (
+                        self._load_texture(mesh.normal_texture_name)
+                        if self.settings.show_normal_map
+                        else None
+                    )
+                    group = (
+                        MaterialTextureGroup(
+                            self._material_program,
+                            texture,
+                            normal_texture,
+                            use_normal=self.settings.show_normal_map,
+                            use_lighting=self.settings.show_lighting,
+                        )
+                        if self._material_program
+                        else pyglet.graphics.TextureGroup(texture)
+                    )
                     fmt = (
                         ("v3f/static", coords),
                         ("n3f/static", norms),
@@ -744,23 +961,37 @@ class YddViewerWindow(pyglet.window.Window):
                         ("c3B/static", colors),
                     )
 
-                edge_indices: list[int] = []
-                for i in range(0, len(mesh.indices) - 2, 3):
-                    a, b, c = mesh.indices[i], mesh.indices[i + 1], mesh.indices[i + 2]
-                    edge_indices.extend([a, b, b, c, c, a])
-                edge_list = self.edge_batch.add_indexed(
-                    vertex_count,
-                    GL_LINES,
-                    None,
-                    edge_indices,
-                    ("v3f/static", coords),
-                )
-                if vtx_c4b is not None and self.settings.show_vertices:
-                    point_list = self.point_batch.add(
-                        vertex_count, GL_POINTS, None, ("v3f/static", coords), ("c4B/static", vtx_c4b)
+                edge_list = None
+                if self.settings.show_edges:
+                    triangles = indices.reshape(-1, 3)
+                    edge_indices = np.column_stack(
+                        (
+                            triangles[:, 0],
+                            triangles[:, 1],
+                            triangles[:, 1],
+                            triangles[:, 2],
+                            triangles[:, 2],
+                            triangles[:, 0],
+                        )
+                    ).reshape(-1).tolist()
+                    edge_list = self.edge_batch.add_indexed(
+                        vertex_count,
+                        GL_LINES,
+                        None,
+                        edge_indices,
+                        ("v3f/static", coords),
                     )
-                else:
-                    point_list = self.point_batch.add(vertex_count, GL_POINTS, None, ("v3f/static", coords))
+
+                point_list = None
+                if self.settings.show_vertices:
+                    if vtx_c4b is not None:
+                        point_list = self.point_batch.add(
+                            vertex_count, GL_POINTS, None, ("v3f/static", coords), ("c4B/static", vtx_c4b)
+                        )
+                    else:
+                        point_list = self.point_batch.add(
+                            vertex_count, GL_POINTS, None, ("v3f/static", coords)
+                        )
 
                 self._gpu_meshes.append(
                     GpuMesh(
@@ -808,6 +1039,24 @@ class YddViewerWindow(pyglet.window.Window):
     def _setup_unlit(self, *, use_texture: bool) -> None:
         """Fixed-function shading without lights (avoids washed-out white on some GPUs)."""
         glDisable(GL_LIGHTING)
+        glDisable(GL_COLOR_MATERIAL)
+        glColor3f(1.0, 1.0, 1.0)
+        if use_texture:
+            glEnable(GL_TEXTURE_2D)
+            glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE)
+        else:
+            glDisable(GL_TEXTURE_2D)
+
+    def _setup_lighting(self, *, use_texture: bool) -> None:
+        """Soft camera-side light that works with textures and vertex colours."""
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_NORMALIZE)
+        glEnable(GL_COLOR_MATERIAL)
+        glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
+        glLightfv(GL_LIGHT0, GL_AMBIENT, (GLfloat * 4)(0.30, 0.30, 0.32, 1.0))
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, (GLfloat * 4)(0.90, 0.88, 0.84, 1.0))
+        glLightfv(GL_LIGHT0, GL_POSITION, (GLfloat * 4)(-0.35, 0.75, 0.60, 0.0))
         glColor3f(1.0, 1.0, 1.0)
         if use_texture:
             glEnable(GL_TEXTURE_2D)
@@ -900,13 +1149,19 @@ class YddViewerWindow(pyglet.window.Window):
 
         vtx_mode = self.settings.show_mesh_vertex_colours
         use_texture = self.settings.show_texture and not vtx_mode
-        self._setup_unlit(use_texture=use_texture)
+        if self.settings.show_lighting:
+            self._setup_lighting(use_texture=use_texture)
+        else:
+            self._setup_unlit(use_texture=use_texture)
 
         if self.settings.show_geometry:
             if self._gpu_meshes:
                 self.batch.draw()
             else:
                 self._draw_empty_scene_hint()
+
+        glDisable(GL_LIGHTING)
+        glDisable(GL_COLOR_MATERIAL)
 
         if self._show_edges():
             glDisable(GL_TEXTURE_2D)
@@ -1056,7 +1311,7 @@ class YddViewerWindow(pyglet.window.Window):
         for i, line in enumerate(stats):
             self._make_label(line, x + 18, self.height - 28 - i * 22).draw()
 
-        panel_w, panel_h = 268, 252
+        panel_w, panel_h = 268, 300
         panel_x = x + vw - panel_w - 10
         panel_y = self.height - panel_h - 10
         self._panel(panel_x, panel_y, panel_w, panel_h)
@@ -1082,6 +1337,26 @@ class YddViewerWindow(pyglet.window.Window):
 
         row_y -= row_step
         self._draw_color_row(panel_x, panel_w, row_y, "Модель", self.settings.mesh_color, "_btn_mesh_color")
+
+        row_y -= row_step
+        self._draw_toggle_row(
+            panel_x,
+            panel_w,
+            row_y,
+            "Свет",
+            self.settings.show_lighting,
+            "_btn_lighting",
+        )
+
+        row_y -= row_step
+        self._draw_toggle_row(
+            panel_x,
+            panel_w,
+            row_y,
+            "Нормали",
+            self.settings.show_normal_map,
+            "_btn_normal_map",
+        )
 
         row_y -= row_step
         self._draw_toggle_row(
@@ -1366,11 +1641,17 @@ class YddViewerWindow(pyglet.window.Window):
         if self._hit(self._btn_floor_grid, x, y):
             self.settings.show_floor_grid = not self.settings.show_floor_grid
             return True
+        if self._hit(self._btn_lighting, x, y):
+            self._toggle_lighting()
+            return True
+        if self._hit(self._btn_normal_map, x, y):
+            self._toggle_normal_map()
+            return True
         if self._hit(self._btn_edges, x, y):
-            self.settings.show_edges = not self.settings.show_edges
+            self._toggle_edges()
             return True
         if self._hit(self._btn_vertices, x, y):
-            self.settings.show_vertices = not self.settings.show_vertices
+            self._toggle_vertices()
             return True
         if self._hit(self._btn_texture, x, y):
             self._toggle_texture()
@@ -1392,12 +1673,16 @@ class YddViewerWindow(pyglet.window.Window):
 
         if pyglet_key_matches(symbol, key.G):
             self.settings.show_floor_grid = not self.settings.show_floor_grid
+        elif pyglet_key_matches(symbol, key.L):
+            self._toggle_lighting()
+        elif pyglet_key_matches(symbol, key.N):
+            self._toggle_normal_map()
         elif pyglet_key_matches(symbol, key.D):
             self._cycle_lod()
         elif pyglet_key_matches(symbol, key.E):
-            self.settings.show_edges = not self.settings.show_edges
+            self._toggle_edges()
         elif pyglet_key_matches(symbol, key.V):
-            self.settings.show_vertices = not self.settings.show_vertices
+            self._toggle_vertices()
         elif pyglet_key_matches(symbol, key.P):
             self._toggle_texture()
         elif pyglet_key_matches(symbol, key.C):

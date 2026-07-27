@@ -27,6 +27,7 @@ class DrawableMesh:
     colours1: list[Colour4] = field(default_factory=list)
     indices: list[int] = field(default_factory=list)
     texture_name: str | None = None
+    normal_texture_name: str | None = None
     material_name: str | None = None
     vertex_count: int = 0
     triangle_count: int = 0
@@ -281,6 +282,17 @@ def _mesh_texture_name(material) -> str | None:
     return name
 
 
+def _mesh_normal_texture_name(material) -> str | None:
+    normal_name = None
+    if material is None:
+        return normal_name
+    for name in _material_texture_names(material):
+        lowered = _texture_key(name)
+        if normal_name is None and ("normal" in lowered or "bump" in lowered):
+            normal_name = name
+    return normal_name
+
+
 def _gta_uv_to_gl(u: float, v: float) -> tuple[float, float]:
     """RAGE/D3D texcoords -> OpenGL.
 
@@ -496,6 +508,7 @@ def _build_drawable_model(entry, drawable, lod: str) -> DrawableModel | None:
 
         material = mesh.material
         mesh_texture = _mesh_texture_name(material)
+        normal_texture = _mesh_normal_texture_name(material)
         for texture_name in _material_texture_names(material):
             if texture_name not in texture_names:
                 texture_names.append(texture_name)
@@ -518,6 +531,7 @@ def _build_drawable_model(entry, drawable, lod: str) -> DrawableModel | None:
                 colours1=colours1,
                 indices=list(mesh.indices),
                 texture_name=mesh_texture,
+                normal_texture_name=normal_texture,
                 material_name=material.name if material is not None else None,
                 vertex_count=len(mesh.positions),
                 triangle_count=triangle_count,

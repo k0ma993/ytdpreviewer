@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<schema xmlns="http://schemas.microsoft.com/windows/2006/propertydescription"
+        schemaVersion="1.0">
+  <propertyDescriptionList publisher="YTD Previewer" product="YTD Previewer">
+    <propertyDescription
+        name="YTDPreviewer.AssociatedYtdCount"
+        formatID="{761DA6FA-CC69-4F1F-AF39-1415E219AABB}"
+        propID="2">
+      <searchInfo inInvertedIndex="false" isColumn="true"/>
+      <labelInfo label="YTD файлов" sortDescription="LowestHighest"/>
+      <typeInfo type="UInt32" isInnate="true" isViewable="true"/>
+      <displayInfo displayType="Number" alignment="Right"
+                   defaultColumnWidth="10" relativeDescriptionType="Count"/>
+    </propertyDescription>
+  </propertyDescriptionList>
+</schema>

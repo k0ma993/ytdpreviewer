@@ -80,11 +80,13 @@ class PreviewWindow:
         self._current_pil: Image.Image | None = None
         self._decode_generation = 0
         self._resize_after: str | None = None
+        self._zoom_after: str | None = None
+        self._quality_after: str | None = None
         self._cache_lock = threading.Lock()
         self._zoom = 1.0
         self._pan_x = 0.0
         self._pan_y = 0.0
-        self._drag: tuple[int, int, float, float] | None = None
+        self._drag: tuple[int, int, float, float, float, float] | None = None
         self._image_id: int | None = None
         self._rendered_zoom = 0.0
         self._rendered_size: tuple[int, int] = (0, 0)
@@ -378,6 +380,7 @@ class PreviewWindow:
             text="Загрузка…",
             fill=FG_DIM,
             font=("Segoe UI", 12),
+            tags=("loading",),
         )
 
     def _load_worker(self) -> None:
@@ -899,6 +902,8 @@ class PreviewWindow:
         self._pan_x = 0.0
         self._pan_y = 0.0
         self._drag = None
+        if self._image_id is not None:
+            self.canvas.delete(self._image_id)
         self._image_id = None
         self._rendered_zoom = 0.0
         self.canvas.configure(cursor="")
@@ -951,12 +956,19 @@ class PreviewWindow:
         self._pan_x = mx - rel_x * ndw - (cw - ndw) / 2
         self._pan_y = my - rel_y * ndh - (ch - ndh) / 2
         self._zoom = new_zoom
-        self._draw_main()
+        if self._zoom_after is None:
+            self._zoom_after = self.root.after(8, lambda: self._draw_main(fast=True))
+        self._schedule_quality_render()
 
     def _on_pan_start(self, event) -> None:
         if self._current_pil is None:
             return
-        self._drag = (event.x, event.y, self._pan_x, self._pan_y)
+        image_x, image_y = (0.0, 0.0)
+        if self._image_id is not None:
+            coords = self.canvas.coords(self._image_id)
+            if len(coords) >= 2:
+                image_x, image_y = coords[0], coords[1]
+        self._drag = (event.x, event.y, self._pan_x, self._pan_y, image_x, image_y)
         self.canvas.configure(cursor="fleur")
 
     def _on_pan_move(self, event) -> None:
@@ -966,11 +978,22 @@ class PreviewWindow:
         dy = event.y - self._drag[1]
         self._pan_x = self._drag[2] + dx
         self._pan_y = self._drag[3] + dy
-        self._draw_main(pan_only=True)
+        if self._zoom_after is None:
+            self._zoom_after = self.root.after(
+                8,
+                lambda: self._draw_main(pan_only=True, fast=True),
+            )
 
     def _on_pan_end(self, _event) -> None:
         self._drag = None
         self.canvas.configure(cursor="")
+        if self._zoom_after is not None:
+            self.root.after_cancel(self._zoom_after)
+            self._zoom_after = None
+        if self._quality_after is not None:
+            self.root.after_cancel(self._quality_after)
+            self._quality_after = None
+        self._draw_main()
 
     def _on_canvas_resize(self, _event: object) -> None:
         self._ensure_canvas_bg()
@@ -980,18 +1003,32 @@ class PreviewWindow:
             self.root.after_cancel(self._resize_after)
         self._resize_after = self.root.after(50, self._draw_main)
 
-    def _draw_main(self, *, pan_only: bool = False) -> None:
+    def _schedule_quality_render(self) -> None:
+        if self._quality_after is not None:
+            self.root.after_cancel(self._quality_after)
+        self._quality_after = self.root.after(140, self._draw_quality)
+
+    def _draw_quality(self) -> None:
+        self._quality_after = None
+        self._draw_main()
+
+    def _draw_main(self, *, pan_only: bool = False, fast: bool = False) -> None:
         self._resize_after = None
+        self._zoom_after = None
         if self._current_pil is None:
             return
+        self.canvas.delete("loading")
 
         metrics = self._view_metrics()
         if metrics is None:
             return
         _fit, dw, dh, ix, iy = metrics
+        cw, ch = self._canvas_size()
+        fully_visible = ix >= 0 and iy >= 0 and ix + dw <= cw and iy + dh <= ch
 
         same_scale = (
             pan_only
+            and fully_visible
             and self._image_id is not None
             and abs(self._zoom - self._rendered_zoom) < 1e-6
             and self._rendered_size == (dw, dh)
@@ -1001,16 +1038,50 @@ class PreviewWindow:
             return
 
         img = self._current_pil
-        if dw != img.width or dh != img.height:
-            shown = img.resize((dw, dh), Image.Resampling.BILINEAR)
+        visible_left = max(0, ix)
+        visible_top = max(0, iy)
+        visible_right = min(cw, ix + dw)
+        visible_bottom = min(ch, iy + dh)
+        if visible_right <= visible_left or visible_bottom <= visible_top:
+            if self._image_id is not None:
+                self.canvas.itemconfigure(self._image_id, state=tk.HIDDEN)
+            return
+
+        shown_w = visible_right - visible_left
+        shown_h = visible_bottom - visible_top
+        if fully_visible:
+            resampling = Image.Resampling.NEAREST if fast else Image.Resampling.BILINEAR
+            shown = (
+                img.resize((dw, dh), resampling)
+                if dw != img.width or dh != img.height
+                else img
+            )
         else:
-            shown = img
+            source_box = (
+                (visible_left - ix) * img.width / dw,
+                (visible_top - iy) * img.height / dh,
+                (visible_right - ix) * img.width / dw,
+                (visible_bottom - iy) * img.height / dh,
+            )
+            shown = img.transform(
+                (shown_w, shown_h),
+                Image.Transform.EXTENT,
+                source_box,
+                Image.Resampling.NEAREST if fast else Image.Resampling.BILINEAR,
+            )
 
         self._main_photo = ImageTk.PhotoImage(shown)
-        self.canvas.delete("all")
-        self._canvas_bg_id = None
         self._ensure_canvas_bg()
-        self._image_id = self.canvas.create_image(ix, iy, anchor=tk.NW, image=self._main_photo)
+        if self._image_id is None:
+            self._image_id = self.canvas.create_image(
+                visible_left,
+                visible_top,
+                anchor=tk.NW,
+                image=self._main_photo,
+            )
+        else:
+            self.canvas.itemconfigure(self._image_id, image=self._main_photo, state=tk.NORMAL)
+            self.canvas.coords(self._image_id, visible_left, visible_top)
         self._rendered_zoom = self._zoom
         self._rendered_size = (dw, dh)
 

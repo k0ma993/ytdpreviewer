@@ -43,6 +43,8 @@ YTD_THUMB_ASSEMBLY = "YtdThumbnail"
 YDD_THUMB_CLSID = "{4C8E1F2A-6B3D-4E59-9C01-2F7E6D5A4B3C}"
 YDD_THUMB_PROG_ID = "YTDPreviewer.YddThumbnail"
 YDD_THUMB_CLASS = "YtdThumbnail.YddSharpHandler"
+YDD_PROPERTY_DLL = "YddProperties.dll"
+YDD_PROPERTY_SCHEMA = "YTDPreviewer.propdesc"
 YTD_ICON_SHELLEX = "IconHandler"
 # RegAsm also registers this for managed in-proc COM (required by Explorer).
 DOTNET_COM_CATEGORY = "{62C8FE65-4EBB-45E7-B440-6E39B2CDBF29}"
@@ -57,6 +59,77 @@ def _is_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except OSError:
         return False
+
+
+def _property_schema_call(function_name: str, schema: Path) -> bool:
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    ole32.CoUninitialize.argtypes = []
+    ole32.CoUninitialize.restype = None
+    # Installation runs in a worker thread. COM must be initialized separately
+    # in every thread before calling the Windows Property System.
+    coinit_hr = ole32.CoInitializeEx(None, 0x2)  # COINIT_APARTMENTTHREADED
+    should_uninitialize = coinit_hr >= 0
+    rpc_e_changed_mode = ctypes.c_long(0x80010106).value
+    if coinit_hr < 0 and coinit_hr != rpc_e_changed_mode:
+        return False
+    try:
+        function = getattr(ctypes.windll.propsys, function_name)
+        function.argtypes = [ctypes.c_wchar_p]
+        function.restype = ctypes.c_long
+        return function(str(schema.resolve())) >= 0
+    except (AttributeError, OSError):
+        return False
+    finally:
+        if should_uninitialize:
+            ole32.CoUninitialize()
+
+
+def _register_ydd_property_handler(install_dir: Path) -> bool:
+    dll = install_dir / YDD_PROPERTY_DLL
+    schema = install_dir / YDD_PROPERTY_SCHEMA
+    if not dll.is_file() or not schema.is_file() or not _is_admin():
+        return False
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        proc = subprocess.run(
+            ["regsvr32.exe", "/s", str(dll)],
+            capture_output=True,
+            timeout=30,
+            creationflags=flags,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if proc.returncode != 0:
+        return False
+    if not _property_schema_call("PSRegisterPropertySchema", schema):
+        subprocess.run(
+            ["regsvr32.exe", "/s", "/u", str(dll)],
+            capture_output=True,
+            timeout=30,
+            creationflags=flags,
+        )
+        return False
+    return True
+
+
+def _unregister_ydd_property_handler(install_dir: Path) -> None:
+    dll = install_dir / YDD_PROPERTY_DLL
+    schema = install_dir / YDD_PROPERTY_SCHEMA
+    if schema.is_file() and _is_admin():
+        _property_schema_call("PSUnregisterPropertySchema", schema)
+    if dll.is_file() and _is_admin():
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            subprocess.run(
+                ["regsvr32.exe", "/s", "/u", str(dll)],
+                capture_output=True,
+                timeout=30,
+                creationflags=flags,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
 
 def _notify_shell() -> None:
@@ -1438,7 +1511,13 @@ def _release_install_locks(
 def _stop_shell_preview_hosts() -> None:
     """Stop disposable Windows hosts that may keep the thumbnail DLL loaded."""
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    for image_name in ("dllhost.exe", "prevhost.exe", "DataExchangeHost.exe"):
+    for image_name in (
+        "dllhost.exe",
+        "prevhost.exe",
+        "DataExchangeHost.exe",
+        "SearchFilterHost.exe",
+        "SearchProtocolHost.exe",
+    ):
         try:
             subprocess.run(
                 ["taskkill", "/F", "/IM", image_name],
@@ -1472,7 +1551,13 @@ def _materialize_payload(source_dir: Path, dest_dir: Path) -> None:
         if src_icon.is_file():
             shutil.copy2(src_icon, dest_dir / "assets" / icon_name)
 
-    for shell_name in ("YtdThumbnail.dll", "SharpShell.dll", "RegisterShell.exe"):
+    for shell_name in (
+        "YtdThumbnail.dll",
+        "SharpShell.dll",
+        "RegisterShell.exe",
+        YDD_PROPERTY_DLL,
+        YDD_PROPERTY_SCHEMA,
+    ):
         src_shell = source_dir / shell_name
         if src_shell.is_file():
             shutil.copy2(src_shell, dest_dir / shell_name)
@@ -1784,6 +1869,7 @@ def install_with_progress(
     if (target / "YtdThumbnail.dll").is_file() or (target / "RegisterShell.exe").is_file():
         step(12, "Снятие старого обработчика превью...")
         _unregister_sharpshell(target, project_root)
+        _unregister_ydd_property_handler(target)
         time.sleep(0.6)
 
     step(15, "Копирование файлов программы...")
@@ -1845,10 +1931,16 @@ def install_with_progress(
     if enable_thumbs:
         step(68, "Превью .ytd в проводнике...")
         _register_ytd_thumbnail(target, source, project_root, dev=dev, shell_admin=shell_admin)
+        properties_ok = _register_ydd_property_handler(target)
+        if not dev and shell_admin and not properties_ok:
+            raise RuntimeError(
+                "Не удалось зарегистрировать столбец «Текстуры» для .ydd."
+            )
         _seed_thumb_roots(project_root, target)
     else:
         step(68, "Превью в проводнике отключено...")
         _unregister_ydd_thumbnail_shellex(shell_admin=shell_admin and _is_admin())
+        _unregister_ydd_property_handler(target)
 
     step(82, "Автозапуск...")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
@@ -1974,6 +2066,7 @@ def uninstall_with_progress(
     _unregister_directory_warm_verb()
 
     step(60, "Превью в проводнике...")
+    _unregister_ydd_property_handler(target)
     _unregister_ytd_thumbnail(target, project_root)
 
     if clear_caches:
