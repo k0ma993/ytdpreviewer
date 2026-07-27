@@ -125,6 +125,10 @@ def _format_install_error(exc: Exception) -> str:
 class SetupApp:
     def __init__(self) -> None:
         self.root = tk.Tk()
+        # Build the complete custom window off-screen. Showing the default Tk
+        # frame before overrideredirect, theming and final geometry causes a
+        # visible resize/flash on Windows.
+        self.root.withdraw()
         self.root.title("YTD Previewer")
         self.root.resizable(False, False)
         apply_tk_icon(self.root)
@@ -191,7 +195,6 @@ class SetupApp:
 
         body = GradientFrame(self.content, GRAD_TOP, GRAD_BOTTOM)
         body.pack(fill=tk.BOTH, expand=True)
-        body.after_idle(body._repaint)
 
         feat = card(body, pady=(12, 6))
         section_label(feat, "Возможности")
@@ -236,6 +239,10 @@ class SetupApp:
         total_h = win_h + WIN_TITLE_H + WIN_BORDER_TOTAL + 2
         total_w = WIN_W + WIN_BORDER_TOTAL
         center_tk_window(self.root, total_w, total_h)
+        self.root.update_idletasks()
+        body._repaint()
+        self.root.deiconify()
+        self.root.lift()
 
     def _request_close(self) -> None:
         if self._busy:

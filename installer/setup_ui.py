@@ -41,28 +41,13 @@ FONT_BTN = (_FONT_FAMILY, 10)
 FONT_BTN_ACCENT = (_FONT_FAMILY, 10, "bold")
 
 
-def _hex_rgb(hex_color: str) -> tuple[int, int, int]:
-    h = hex_color.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
-
-
 def _gradient_photo(width: int, height: int, top: str = GRAD_TOP, bottom: str = GRAD_BOTTOM):
-    from PIL import Image, ImageTk
+    from PIL import Image, ImageOps, ImageTk
 
     w = max(width, 1)
     h = max(height, 1)
-    r1, g1, b1 = _hex_rgb(top)
-    r2, g2, b2 = _hex_rgb(bottom)
-    img = Image.new("RGB", (w, h))
-    px = img.load()
-    denom = max(h - 1, 1)
-    for y in range(h):
-        t = y / denom
-        r = int(r1 + (r2 - r1) * t)
-        g = int(g1 + (g2 - g1) * t)
-        b = int(b1 + (b2 - b1) * t)
-        for x in range(w):
-            px[x, y] = (r, g, b)
+    ramp = Image.linear_gradient("L").resize((1, h))
+    img = ImageOps.colorize(ramp, black=top, white=bottom).resize((w, h))
     return ImageTk.PhotoImage(img)
 
 
