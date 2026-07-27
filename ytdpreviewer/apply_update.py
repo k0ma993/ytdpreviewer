@@ -307,7 +307,11 @@ def run_apply_update(staging: Path, install_dir: Path | None = None) -> None:
 
         _kill_other_apply_updates(target, my_pid, log)
 
-        from ytdpreviewer.setup_windows import _stop_explorer, _stop_running_app
+        from ytdpreviewer.setup_windows import (
+            _stop_explorer,
+            _stop_running_app,
+            _stop_shell_preview_hosts,
+        )
 
         deadline = time.monotonic() + WAIT_GRACE_SEC
         while time.monotonic() < deadline:
@@ -324,6 +328,8 @@ def run_apply_update(staging: Path, install_dir: Path | None = None) -> None:
         if need_explorer:
             log("stop explorer")
             _stop_explorer()
+            log("stop shell preview hosts")
+            _stop_shell_preview_hosts()
 
         log("spawn finish helper and exit")
         _spawn_finish_helper(

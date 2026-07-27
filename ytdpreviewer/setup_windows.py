@@ -1432,6 +1432,23 @@ def _release_install_locks(
 ) -> None:
     _stop_running_app(install_dir, except_pid=except_pid)
     _stop_explorer()
+    _stop_shell_preview_hosts()
+
+
+def _stop_shell_preview_hosts() -> None:
+    """Stop disposable Windows hosts that may keep the thumbnail DLL loaded."""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    for image_name in ("dllhost.exe", "prevhost.exe", "DataExchangeHost.exe"):
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", image_name],
+                capture_output=True,
+                timeout=15,
+                creationflags=flags,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    time.sleep(0.8)
 
 
 def _materialize_payload(source_dir: Path, dest_dir: Path) -> None:

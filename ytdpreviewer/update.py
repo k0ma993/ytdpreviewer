@@ -113,12 +113,16 @@ def _clear_stale_update_ui_lock(install_dir: Path) -> None:
 
 
 def _flush_ui_queue() -> None:
-    try:
-        while True:
+    while True:
+        try:
             fn = _ui_queue.get_nowait()
+        except queue.Empty:
+            return
+        try:
             fn()
-    except queue.Empty:
-        pass
+        except Exception:
+            # A failed dialog must not permanently stop all future tray actions.
+            continue
 
 
 def install_ui_pump(root: tk.Tk) -> None:

@@ -107,7 +107,7 @@ class BackgroundApp:
                 self._tk_root = tk.Tk()
                 self._tk_root.withdraw()
                 if on_ready is not None:
-                    self._tk_root.after(0, lambda: on_ready(self._tk_root))  # type: ignore[arg-type]
+                    on_ready(self._tk_root)
                 ready.set()
                 self._tk_root.mainloop()
 
