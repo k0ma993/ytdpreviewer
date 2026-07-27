@@ -11,9 +11,6 @@ from PIL import Image
 import pystray
 from pystray._util import win32
 
-NOTIFY_VERSION_4 = 4
-
-
 @dataclass(frozen=True)
 class TrayMenuItem:
     menu_id: int
@@ -40,7 +37,6 @@ class NativeTray(pystray.Icon):
 
     def _show(self) -> None:
         super()._show()
-        self._set_notify_version()
         self._update_title()
 
     def _update_title(self) -> None:
@@ -54,18 +50,6 @@ class NativeTray(pystray.Icon):
             szTip=self._tip,
         )
         win32.Shell_NotifyIcon(win32.NIM_MODIFY, data)
-
-    def _set_notify_version(self) -> None:
-        if not self._hwnd:
-            return
-        data = win32.NOTIFYICONDATAW(
-            cbSize=ctypes.sizeof(win32.NOTIFYICONDATAW),
-            hWnd=self._hwnd,
-            uID=id(self),
-            uFlags=0,
-        )
-        data.uVersion = NOTIFY_VERSION_4
-        win32.Shell_NotifyIcon(win32.NIM_SETVERSION, data)
 
     def _on_notify(self, wparam, lparam) -> None:
         if lparam == win32.WM_LBUTTONUP:
@@ -101,14 +85,12 @@ class NativeTray(pystray.Icon):
                 menu,
                 win32.TPM_RIGHTALIGN
                 | win32.TPM_BOTTOMALIGN
-                | win32.TPM_RETURNCMD
-                | win32.TPM_NONOTIFY,
+                | win32.TPM_RETURNCMD,
                 point.x,
                 point.y,
                 menu_hwnd,
                 None,
             )
-            win32.PostMessage(hwnd, win32.WM_NULL, 0, 0)
             if command > 0:
                 idx = command - 1
                 if 0 <= idx < len(callbacks):
