@@ -2,12 +2,54 @@
 
 from __future__ import annotations
 
+import faulthandler
+import logging
+import os
 import subprocess
 import sys
 import tempfile
 import threading
 import zipfile
 from pathlib import Path
+
+
+def _setup_log_path() -> Path:
+    local = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()))
+    return local / "YTDPreviewer-Setup" / "setup.log"
+
+
+SETUP_LOG_PATH = _setup_log_path()
+SETUP_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+_SETUP_LOG_STREAM = SETUP_LOG_PATH.open("a", encoding="utf-8", buffering=1)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(threadName)s] %(message)s",
+    handlers=[logging.StreamHandler(_SETUP_LOG_STREAM)],
+    force=True,
+)
+try:
+    faulthandler.enable(file=_SETUP_LOG_STREAM, all_threads=True)
+except (OSError, RuntimeError):
+    pass
+
+
+def _log_unhandled_exception(exc_type, exc_value, exc_traceback) -> None:
+    logging.critical(
+        "Unhandled exception",
+        exc_info=(exc_type, exc_value, exc_traceback),
+    )
+
+
+def _log_thread_exception(args: threading.ExceptHookArgs) -> None:
+    logging.critical(
+        "Unhandled thread exception in %s",
+        getattr(args.thread, "name", "unknown"),
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+    )
+
+
+sys.excepthook = _log_unhandled_exception
+threading.excepthook = _log_thread_exception
 
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -110,20 +152,21 @@ def _format_install_error(exc: Exception) -> str:
             "• Закройте YTD Previewer (трей → выход).\n"
             "• Запускайте только dist\\setup\\setup.exe после build.bat.\n"
             "• Если не помогает — перезагрузите ПК и установите снова.\n\n"
-            f"Технически: {text}"
+            f"Технически: {text}\n\nЛог установки:\n{SETUP_LOG_PATH}"
         )
     if winerror == 5 or "[WinError 5]" in text:
         return (
             "Нет доступа к файлу (нужны права или файл заблокирован).\n\n"
             "Закройте YTD Previewer и проводник в папке установки, "
             "затем повторите.\n\n"
-            f"Технически: {text}"
+            f"Технически: {text}\n\nЛог установки:\n{SETUP_LOG_PATH}"
         )
-    return text
+    return f"{text}\n\nЛог установки:\n{SETUP_LOG_PATH}"
 
 
 class SetupApp:
     def __init__(self) -> None:
+        logging.info("Creating setup window")
         self.root = tk.Tk()
         # Build the complete custom window off-screen. Showing the default Tk
         # frame before overrideredirect, theming and final geometry causes a
@@ -263,6 +306,7 @@ class SetupApp:
         self.root.configure(cursor="watch" if busy else "")
 
     def _update_progress(self, percent: int, message: str) -> None:
+        logging.info("Progress %d%%: %s", percent, message)
         self.progress["value"] = max(0, min(100, percent))
         self.status.config(text=message, fg=ACCENT if percent >= 100 else FG_DIM)
 
@@ -283,12 +327,19 @@ class SetupApp:
         ):
             return
         self._set_busy(True)
+        logging.info(
+            "Install requested: target=%s explorer=%s admin=%s",
+            target,
+            self.explorer_var.get(),
+            _is_admin(),
+        )
         self.progress["value"] = 0
         self.status.config(fg=FG_DIM)
         threading.Thread(target=self._install_worker, args=(target,), daemon=True).start()
 
     def _install_worker(self, target: Path) -> None:
         try:
+            logging.info("Install worker started")
             if getattr(sys, "frozen", False):
                 setup_exe = Path(sys.executable).resolve()
                 try:
@@ -301,7 +352,9 @@ class SetupApp:
                     pass
 
             if self._bundle_dir is None:
+                logging.info("Extracting embedded application bundle")
                 self._bundle_dir = _extract_bundle()
+                logging.info("Bundle extracted to %s", self._bundle_dir)
 
             def on_progress(percent: int, message: str) -> None:
                 self.root.after(0, lambda p=percent, m=message: self._update_progress(p, m))
@@ -321,6 +374,7 @@ class SetupApp:
                 explorer_thumbnails=want_thumbs,
                 on_progress=on_progress,
             )
+            logging.info("install_with_progress completed")
 
             explorer_ok = True
             if want_thumbs:
@@ -330,9 +384,11 @@ class SetupApp:
 
             self.root.after(0, lambda: self._on_install_done(target, explorer_ok))
         except Exception as exc:
+            logging.exception("Installation failed")
             self.root.after(0, lambda e=exc: self._on_install_error(e))
 
     def _on_install_done(self, target: Path, explorer_ok: bool) -> None:
+        logging.info("Installation completed: target=%s explorer_ok=%s", target, explorer_ok)
         self._set_busy(False)
         self._update_progress(100, "Установка завершена")
         launch_background_app(target)
@@ -357,6 +413,7 @@ class SetupApp:
         )
 
     def _on_install_error(self, exc: Exception) -> None:
+        logging.error("Showing installation error: %s", exc)
         self._set_busy(False)
         self._update_progress(0, "Ошибка установки")
         self.status.config(fg="#e57373")
@@ -379,14 +436,17 @@ class SetupApp:
 
     def _uninstall_worker(self) -> None:
         try:
+            logging.info("Uninstall worker started")
             target = Path(self.dir_var.get().strip() or default_install_dir())
 
             def on_progress(percent: int, message: str) -> None:
                 self.root.after(0, lambda p=percent, m=message: self._update_progress(p, m))
 
             uninstall_with_progress(target, on_progress=on_progress)
+            logging.info("Uninstall completed: target=%s", target)
             self.root.after(0, self._on_uninstall_done)
         except Exception as exc:
+            logging.exception("Uninstall failed")
             self.root.after(0, lambda e=exc: self._on_install_error(e))
 
     def _on_uninstall_done(self) -> None:
@@ -462,6 +522,12 @@ def _forward_game_file_if_misassociated() -> bool:
 
 
 def main() -> None:
+    logging.info(
+        "Setup started: executable=%s frozen=%s argv=%r",
+        sys.executable,
+        bool(getattr(sys, "frozen", False)),
+        sys.argv,
+    )
     _auto_repair_associations()
     if _forward_game_file_if_misassociated():
         return

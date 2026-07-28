@@ -99,6 +99,7 @@ from pyglet.gl import (
     glGetUniformLocation,
     glLinkProgram,
     glShaderSource,
+    glUniform3f,
     glUniform1i,
     glUseProgram,
     GLchar,
@@ -168,6 +169,7 @@ uniform sampler2D diffuse_map;
 uniform sampler2D normal_map;
 uniform bool use_normal_map;
 uniform bool use_lighting;
+uniform vec3 light_direction;
 
 varying vec3 eye_position;
 varying vec3 surface_normal;
@@ -194,8 +196,7 @@ void main() {
         normal = normalize(tangent * mapped.x + bitangent * mapped.y + normal * mapped.z);
     }
 
-    vec3 light_direction = normalize(vec3(-0.35, 0.75, 0.60));
-    float diffuse_light = max(dot(normal, light_direction), 0.0);
+    float diffuse_light = max(dot(normal, normalize(light_direction)), 0.0);
     vec3 color = base.rgb * (0.30 + 0.90 * diffuse_light);
 
     gl_FragColor = vec4(color, base.a);
@@ -246,6 +247,7 @@ class MaterialTextureGroup(pyglet.graphics.Group):
         *,
         use_normal: bool,
         use_lighting: bool,
+        light_direction,
     ) -> None:
         super().__init__()
         self.program = program
@@ -253,6 +255,7 @@ class MaterialTextureGroup(pyglet.graphics.Group):
         self.normal = normal or diffuse
         self.use_normal = bool(normal and use_normal)
         self.use_lighting = use_lighting
+        self.light_direction = light_direction
 
     def __eq__(self, other) -> bool:
         return self is other
@@ -272,6 +275,13 @@ class MaterialTextureGroup(pyglet.graphics.Group):
             glUniform1i(glGetUniformLocation(self.program, uniform), unit - GL_TEXTURE0)
         glUniform1i(glGetUniformLocation(self.program, b"use_normal_map"), self.use_normal)
         glUniform1i(glGetUniformLocation(self.program, b"use_lighting"), self.use_lighting)
+        light_x, light_y, light_z = self.light_direction()
+        glUniform3f(
+            glGetUniformLocation(self.program, b"light_direction"),
+            light_x,
+            light_y,
+            light_z,
+        )
         glActiveTexture(GL_TEXTURE0)
 
     def unset_state(self) -> None:
@@ -502,6 +512,9 @@ class YddViewerWindow(pyglet.window.Window):
         self.cam_pitch = 18.0
         self.cam_dist = max(self._radius * 2.4, 1.5)
         self._drag: tuple[int, int] | None = None
+        self._light_drag = False
+        self.light_yaw = -30.0
+        self.light_pitch = 48.0
         self._fps = 0.0
         self._fps_time = time.perf_counter()
         self._frames = 0
@@ -784,6 +797,16 @@ class YddViewerWindow(pyglet.window.Window):
         self.settings.show_lighting = not self.settings.show_lighting
         self._rebuild_geometry(preserve_camera=True)
 
+    def _light_direction(self) -> tuple[float, float, float]:
+        yaw = math.radians(self.light_yaw)
+        pitch = math.radians(self.light_pitch)
+        horizontal = math.cos(pitch)
+        return (
+            float(horizontal * math.sin(yaw)),
+            float(math.sin(pitch)),
+            float(horizontal * math.cos(yaw)),
+        )
+
     def _toggle_normal_map(self) -> None:
         self.settings.show_normal_map = not self.settings.show_normal_map
         self._rebuild_geometry(preserve_camera=True)
@@ -912,6 +935,7 @@ class YddViewerWindow(pyglet.window.Window):
                             normal_texture,
                             use_normal=self.settings.show_normal_map,
                             use_lighting=self.settings.show_lighting,
+                            light_direction=self._light_direction,
                         )
                         if self._material_program
                         else pyglet.graphics.TextureGroup(texture)
@@ -1056,7 +1080,11 @@ class YddViewerWindow(pyglet.window.Window):
         glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
         glLightfv(GL_LIGHT0, GL_AMBIENT, (GLfloat * 4)(0.30, 0.30, 0.32, 1.0))
         glLightfv(GL_LIGHT0, GL_DIFFUSE, (GLfloat * 4)(0.90, 0.88, 0.84, 1.0))
-        glLightfv(GL_LIGHT0, GL_POSITION, (GLfloat * 4)(-0.35, 0.75, 0.60, 0.0))
+        light_x, light_y, light_z = self._light_direction()
+        glPushMatrix()
+        glLoadIdentity()
+        glLightfv(GL_LIGHT0, GL_POSITION, (GLfloat * 4)(light_x, light_y, light_z, 0.0))
+        glPopMatrix()
         glColor3f(1.0, 1.0, 1.0)
         if use_texture:
             glEnable(GL_TEXTURE_2D)
@@ -1443,7 +1471,7 @@ class YddViewerWindow(pyglet.window.Window):
 
         hint = (
             self._status
-            or "ЛКМ — камера, G — сетка пола, P — текстура, C — vtx, E/V — рёбра/вершины"
+            or "ЛКМ — камера, ПКМ — свет, G — сетка, P — текстура, E/V — рёбра/вершины"
         )
         self._make_label(
             hint,
@@ -1553,15 +1581,24 @@ class YddViewerWindow(pyglet.window.Window):
             if self._ui_click(x, y):
                 return
             self._drag = (x, y)
+        elif button == mouse.RIGHT:
+            self._light_drag = True
+            self._status = "Перемещение света: ПКМ"
 
     def on_mouse_drag(self, x: int, y: int, dx: int, dy: int, buttons, modifiers) -> None:
         if buttons & mouse.LEFT and self._drag is not None:
             self.cam_yaw -= dx * 0.4
             self.cam_pitch = max(-89.0, min(89.0, self.cam_pitch - dy * 0.35))
+        if buttons & mouse.RIGHT and self._light_drag:
+            self.light_yaw += dx * 0.5
+            self.light_pitch = max(-89.0, min(89.0, self.light_pitch + dy * 0.5))
 
     def on_mouse_release(self, x: int, y: int, button, modifiers) -> None:
         if button == mouse.LEFT:
             self._drag = None
+        elif button == mouse.RIGHT:
+            self._light_drag = False
+            self._status = ""
 
     def on_mouse_scroll(self, x: int, y: int, scroll_x: int, scroll_y: int) -> None:
         if self._hit(self._texture_panel_rect, x, y) and scroll_y:

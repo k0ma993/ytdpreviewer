@@ -62,28 +62,48 @@ def _is_admin() -> bool:
 
 
 def _property_schema_call(function_name: str, schema: Path) -> bool:
-    ole32 = ctypes.windll.ole32
-    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-    ole32.CoInitializeEx.restype = ctypes.c_long
-    ole32.CoUninitialize.argtypes = []
-    ole32.CoUninitialize.restype = None
-    # Installation runs in a worker thread. COM must be initialized separately
-    # in every thread before calling the Windows Property System.
-    coinit_hr = ole32.CoInitializeEx(None, 0x2)  # COINIT_APARTMENTTHREADED
-    should_uninitialize = coinit_hr >= 0
-    rpc_e_changed_mode = ctypes.c_long(0x80010106).value
-    if coinit_hr < 0 and coinit_hr != rpc_e_changed_mode:
+    if function_name not in {"PSRegisterPropertySchema", "PSUnregisterPropertySchema"}:
         return False
+    # Keep the native Property System call outside the installer process.
+    # Some Windows builds/third-party shell extensions can crash inside propsys;
+    # an isolated helper must not take the setup UI down with it.
+    schema_arg = str(schema.resolve()).replace("'", "''")
+    script = rf"""
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class YtdPropertySchema {{
+    [DllImport("propsys.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+    public static extern int PSRegisterPropertySchema(string path);
+    [DllImport("propsys.dll", CharSet = CharSet.Unicode, PreserveSig = true)]
+    public static extern int PSUnregisterPropertySchema(string path);
+}}
+'@
+$hr = [YtdPropertySchema]::{function_name}('{schema_arg}')
+if ($hr -lt 0) {{ exit 1 }}
+"""
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
-        function = getattr(ctypes.windll.propsys, function_name)
-        function.argtypes = [ctypes.c_wchar_p]
-        function.restype = ctypes.c_long
-        return function(str(schema.resolve())) >= 0
-    except (AttributeError, OSError):
+        proc = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=30,
+            creationflags=flags,
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
         return False
-    finally:
-        if should_uninitialize:
-            ole32.CoUninitialize()
 
 
 def _register_ydd_property_handler(install_dir: Path) -> bool:
