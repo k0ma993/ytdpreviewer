@@ -13,6 +13,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -28,10 +30,31 @@ jobs:
           CI: "1"
         run: build.bat
 
+      - name: Prepare release notes
+        shell: pwsh
+        run: |
+          $currentTag = "${{ github.ref_name }}"
+          $previousTag = git tag --sort=-version:refname |
+            Where-Object { $_ -ne $currentTag } |
+            Select-Object -First 1
+
+          @(
+            "## Что изменилось"
+            ""
+            if ($previousTag) {
+              git log "$previousTag..HEAD" --pretty=format:"- %s" --invert-grep --grep="^Release "
+              ""
+              ""
+              "Полный список: https://github.com/${{ github.repository }}/compare/$previousTag...$currentTag"
+            } else {
+              "- Первый публичный релиз"
+            }
+          ) | Set-Content -Path release_notes.md -Encoding utf8
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/app_bundle.zip
             dist/setup.zip
-          generate_release_notes: true
+          body_path: release_notes.md

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import tempfile
@@ -323,8 +324,8 @@ def fetch_update_info_from_github(
         return None
 
     notes = str(data.get("body") or data.get("name") or "").strip()
-    if len(notes) > 400:
-        notes = notes[:400].rstrip() + "…"
+    if len(notes) > 4000:
+        notes = notes[:4000].rstrip() + "…"
     return UpdateInfo(version=version, bundle_url=bundle_url, notes=notes)
 
 
@@ -634,10 +635,16 @@ def _run_update_worker(
     report(95, 100, "Подготовка к установке…")
 
 
-def _short_release_notes(notes: str, *, limit: int = 140) -> str:
-    text = notes.replace("**", "").replace("__", "").strip()
+def _format_release_notes(notes: str, *, limit: int = 3000) -> str:
+    """Turn GitHub's generated Markdown into readable text for the update UI."""
+    text = notes.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"(?m)^\s*#{1,6}\s*", "", text)
+    text = text.replace("**", "").replace("__", "").replace("`", "")
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if len(text) > limit:
-        return text[:limit].rstrip() + "…"
+        text = text[:limit].rstrip() + "…"
     return text
 
 
@@ -697,7 +704,7 @@ def _show_update_dialog(
     frame = tk.Frame(win, bg=BG_VIEW, padx=28, pady=20)
     frame.pack(fill=tk.BOTH, expand=True)
     frame.grid_columnconfigure(0, weight=1)
-    frame.grid_rowconfigure(1, weight=1)
+    frame.grid_rowconfigure(3, weight=1)
 
     tk.Label(
         frame,
@@ -707,24 +714,61 @@ def _show_update_dialog(
         font=("Segoe UI", 12, "bold"),
     ).grid(row=0, column=0, sticky="w")
 
-    detail = (
+    version_detail = (
         f"Установлена версия {installed_version()}.\n"
         f"Доступна версия {info.version}."
     )
-    if info.notes:
-        detail += f"\n\n{_short_release_notes(info.notes)}"
     tk.Label(
         frame,
-        text=detail,
+        text=version_detail,
         bg=BG_VIEW,
         fg=FG_DIM,
         font=("Segoe UI", 9),
         justify=tk.LEFT,
-        wraplength=380,
+        wraplength=440,
     ).grid(row=1, column=0, sticky="nw", pady=(10, 0))
 
+    tk.Label(
+        frame,
+        text="Что изменилось:",
+        bg=BG_VIEW,
+        fg=FG,
+        font=("Segoe UI", 9, "bold"),
+    ).grid(row=2, column=0, sticky="w", pady=(14, 6))
+
+    notes_frame = tk.Frame(frame, bg=BG_VIEW)
+    notes_frame.grid(row=3, column=0, sticky="nsew")
+    notes_frame.grid_columnconfigure(0, weight=1)
+    notes_frame.grid_rowconfigure(0, weight=1)
+    notes = tk.Text(
+        notes_frame,
+        width=56,
+        height=9,
+        wrap=tk.WORD,
+        bg="#242424",
+        fg=FG_DIM,
+        insertbackground=FG,
+        relief=tk.FLAT,
+        borderwidth=0,
+        padx=10,
+        pady=8,
+        font=("Segoe UI", 9),
+        cursor="arrow",
+    )
+    notes.grid(row=0, column=0, sticky="nsew")
+    scrollbar = tk.Scrollbar(notes_frame, orient=tk.VERTICAL, command=notes.yview)
+    scrollbar.grid(row=0, column=1, sticky="ns")
+    notes.configure(yscrollcommand=scrollbar.set)
+    notes.insert(
+        "1.0",
+        _format_release_notes(info.notes)
+        if info.notes
+        else "Для этого релиза описание изменений не указано.",
+    )
+    notes.configure(state=tk.DISABLED)
+
     buttons = tk.Frame(frame, bg=BG_VIEW)
-    buttons.grid(row=2, column=0, sticky="e", pady=(18, 0))
+    buttons.grid(row=4, column=0, sticky="e", pady=(18, 0))
 
     def _close_dialog() -> None:
         global _update_dialog_open
@@ -778,8 +822,8 @@ def _show_update_dialog(
     flat_button(buttons, "Позже", later).pack(side=tk.RIGHT, padx=(8, 0))
     flat_button(buttons, "Обновить", update_now, accent=True).pack(side=tk.RIGHT)
 
-    win.minsize(440, 220)
-    center_tk_window(win, 440, 260)
+    win.minsize(500, 390)
+    center_tk_window(win, 500, 390)
     win.deiconify()
     win.lift()
     win.focus_force()
