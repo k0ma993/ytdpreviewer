@@ -133,7 +133,9 @@ def main() -> None:
         run_viewer_safe(args[idx + 1])
         return
 
-    background = "--background" in args
+    # A normal double-click (including a Start-menu shortcut) should launch
+    # the resident tray app. Explicit CLI/file arguments keep their old modes.
+    background = "--background" in args or not args
 
     if background:
         from ytdpreviewer.background import run_background
@@ -154,6 +156,7 @@ def main() -> None:
         print("  python -m ytdpreviewer.export_main --export-ydd-obj f.ydd")
         print("  python -m ytdpreviewer.export_main --export-ydd-textures f.ydd")
         print("  python -m ytdpreviewer.export_main --build-ytd-from-png f.png")
+        print("  python -m ytdpreviewer.png_to_dds texture.png   # PNG → DDS")
         print("  python -m ytdpreviewer.setup_windows dev        # установка")
         return
 

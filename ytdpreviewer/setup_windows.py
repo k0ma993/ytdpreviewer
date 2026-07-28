@@ -927,6 +927,67 @@ def _fix_autostart_entry(install_dir: Path) -> None:
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, correct)
 
 
+def _start_menu_shortcut_path() -> Path:
+    roaming = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return roaming / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "YTD Previewer.lnk"
+
+
+def _create_start_menu_shortcut(install_dir: Path) -> bool:
+    app_exe = (install_dir / "YTDPreviewer.exe").resolve()
+    if not app_exe.is_file():
+        return False
+    shortcut = _start_menu_shortcut_path()
+    shortcut.parent.mkdir(parents=True, exist_ok=True)
+
+    def ps_quote(value: str) -> str:
+        return value.replace("'", "''")
+
+    script = (
+        "$shell = New-Object -ComObject WScript.Shell; "
+        f"$link = $shell.CreateShortcut('{ps_quote(str(shortcut))}'); "
+        f"$link.TargetPath = '{ps_quote(str(app_exe))}'; "
+        "$link.Arguments = '--background'; "
+        f"$link.WorkingDirectory = '{ps_quote(str(app_exe.parent))}'; "
+        f"$link.IconLocation = '{ps_quote(str(app_exe))},0'; "
+        "$link.Description = 'YTD Previewer'; "
+        "$link.Save()"
+    )
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        proc = subprocess.run(
+            [
+                "powershell.exe",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=20,
+            creationflags=flags,
+        )
+        return proc.returncode == 0 and shortcut.is_file()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _remove_start_menu_shortcut() -> None:
+    shortcuts = (
+        _start_menu_shortcut_path(),
+        _start_menu_shortcut_path().with_name(f"{APP_NAME}.lnk"),
+    )
+    for shortcut in shortcuts:
+        try:
+            shortcut.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _apply_ftype_assoc(spec: ExtensionSpec, open_command: str) -> None:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     try:
@@ -1965,6 +2026,8 @@ def install_with_progress(
     step(82, "Автозапуск...")
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
         winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, autostart_cmd)
+    if not dev:
+        _create_start_menu_shortcut(target)
 
     step(92, "Обновление оболочки Windows...")
     _notify_shell()
@@ -2069,6 +2132,7 @@ def uninstall_with_progress(
             winreg.DeleteValue(key, APP_NAME)
     except FileNotFoundError:
         pass
+    _remove_start_menu_shortcut()
 
     for spec in EXTENSIONS:
         for verb in ("exportpng", "exportobj", "exporttex"):
