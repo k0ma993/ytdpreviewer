@@ -18,6 +18,36 @@ ProgressCallback = Callable[[int, str], None]
 from ytdpreviewer.paths import APP_NAME, app_dir, assets_dir, default_install_dir
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+INSTALL_MARKER = ".ytdpreviewer-install"
+
+_SAFE_INSTALL_ENTRIES = {
+    INSTALL_MARKER,
+    "_internal",
+    "assets",
+    "export.pyw",
+    "github_repo.txt",
+    "open.pyw",
+    "pythonw.txt",
+    "registershell.exe",
+    "sharpshell.dll",
+    "start_background.cmd",
+    "thumb.log",
+    "thumb_paths",
+    "thumb_roots.txt",
+    "thumbcache",
+    "thumbnail.cmd",
+    "thumbnail.pyw",
+    "tray.pyw",
+    "update_cache",
+    "update_skip.json",
+    "update_url.txt",
+    "version.json",
+    "version.txt",
+    "yddproperties.dll",
+    "ytdpreviewer.exe",
+    "ytdpreviewer.propdesc",
+    "ytdthumbnail.dll",
+}
 
 
 @dataclass(frozen=True)
@@ -59,6 +89,40 @@ def _is_admin() -> bool:
         return bool(ctypes.windll.shell32.IsUserAnAdmin())
     except OSError:
         return False
+
+
+def validate_public_install_dir(install_dir: Path) -> Path:
+    """Reject any destructive install target except our dedicated app folder."""
+    target = install_dir.resolve()
+    expected = default_install_dir().resolve()
+    if os.path.normcase(str(target)) != os.path.normcase(str(expected)):
+        raise ValueError(
+            "В целях безопасности YTD Previewer можно устанавливать только в отдельную папку:\n"
+            f"{expected}"
+        )
+    if target.exists() and not target.is_dir():
+        raise ValueError(f"Путь установки не является папкой:\n{target}")
+    if target.is_dir():
+        entries = list(target.iterdir())
+        if entries and not (
+            (target / INSTALL_MARKER).is_file()
+            or (target / "YTDPreviewer.exe").is_file()
+        ):
+            raise ValueError(
+                "Папка установки содержит чужие файлы и не является установкой YTD Previewer.\n"
+                "Установка остановлена без удаления файлов."
+            )
+        unknown = sorted(
+            entry.name for entry in entries if entry.name.casefold() not in _SAFE_INSTALL_ENTRIES
+        )
+        if unknown:
+            preview = "\n".join(f"• {name}" for name in unknown[:8])
+            raise ValueError(
+                "В папке установки найдены неизвестные файлы или программы.\n"
+                "Установка остановлена без удаления файлов:\n\n"
+                f"{preview}"
+            )
+    return target
 
 
 def _property_schema_call(function_name: str, schema: Path) -> bool:
@@ -1552,7 +1616,6 @@ def _robocopy_tree(src: Path, dst: Path) -> None:
             str(dst),
             "/E",
             "/COPY:DAT",
-            "/PURGE",
             "/R:4",
             "/W:1",
             "/NFL",
@@ -1614,6 +1677,7 @@ def _stop_shell_preview_hosts() -> None:
 def _materialize_payload(source_dir: Path, dest_dir: Path) -> None:
     """Copy a full app tree into *dest_dir* (must be empty or new)."""
     dest_dir.mkdir(parents=True, exist_ok=True)
+    (dest_dir / INSTALL_MARKER).write_text("YTD Previewer\n", encoding="utf-8")
     (dest_dir / "assets").mkdir(exist_ok=True)
 
     exe_src = source_dir / "YTDPreviewer.exe"
@@ -1936,6 +2000,8 @@ def install_with_progress(
             on_progress(percent, message)
 
     target = (install_dir or default_install_dir()).resolve()
+    if not dev:
+        target = validate_public_install_dir(target)
     dev_root = Path(__file__).resolve().parent.parent
     source = (source_dir or _bundle_source_dir(dev_root)).resolve()
     project_root = _resolve_project_root(source, dev=dev)

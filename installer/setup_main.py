@@ -95,6 +95,7 @@ from ytdpreviewer.setup_windows import (
     launch_background_app,
     register_explorer_thumbnails_admin,
     uninstall_with_progress,
+    validate_public_install_dir,
 )
 from ytdpreviewer.ui_theme import center_tk_window
 
@@ -249,6 +250,7 @@ class SetupApp:
         section_label(path_card, "Папка установки")
         self.dir_var = tk.StringVar(value=str(default_install_dir()))
         self.dir_entry = dark_entry(path_card, self.dir_var)
+        self.dir_entry.config(state=tk.DISABLED)
 
         opts = card(body, pady=6)
         self.explorer_var = tk.BooleanVar(value=True)
@@ -300,8 +302,8 @@ class SetupApp:
         self._busy = busy
         self.install_btn.set_enabled(not busy)
         self.uninstall_btn.set_enabled(not busy)
+        self.dir_entry.config(state=tk.DISABLED)
         entry_state = tk.DISABLED if busy else tk.NORMAL
-        self.dir_entry.config(state=entry_state)
         self.explorer_check.config(state=entry_state)
         self.root.configure(cursor="watch" if busy else "")
 
@@ -313,9 +315,15 @@ class SetupApp:
     def _do_install(self) -> None:
         if self._busy:
             return
-        target = Path(self.dir_var.get().strip())
-        if not target:
+        raw_target = self.dir_var.get().strip()
+        if not raw_target:
             messagebox.showerror("Ошибка", "Укажите папку установки.")
+            return
+        try:
+            target = validate_public_install_dir(Path(raw_target))
+        except (OSError, ValueError) as exc:
+            logging.warning("Unsafe install target rejected: %s", exc)
+            messagebox.showerror("Безопасность установки", str(exc))
             return
         if not messagebox.askokcancel(
             "Проводник будет перезапущен",
